@@ -1,0 +1,18 @@
+stream_trace_plot:
+   channel: "Z"  # if "*" plot all
+   #
+   preprocessing:
+      doit: True
+      detrend: True
+      removemean: True
+      taper: False
+      taper_par: []   # wintype-winlength
+      filter_type: "highpass"  # highpass, lowpass, bandpass
+      npoles: 2
+      low_freq: 1.0
+      high_freq: 30.0
+   #
+   enlarge_axis: False
+   plot_legend: False
+   xlabel: 'time (s)'
+   ylabel: 'counts'
