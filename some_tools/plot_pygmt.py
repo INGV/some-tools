@@ -6,9 +6,11 @@ Thanks to PyGMT
 import pygmt
 from obspy import UTCDateTime
 import numpy as np
+import logging
 
+logger = logging.getLogger(__name__)
 
-# DEFAULTS for the pygmt.Figure().
+# ========================================  PyGMT defaults
 pygmt.config(MAP_FRAME_TYPE="plain")
 pygmt.config(FORMAT_GEO_MAP="ddd.xx")
 pygmt.config(FORMAT_GEO_MAP="ddd.xxF")
@@ -19,6 +21,7 @@ pygmt.config(PROJ_LENGTH_UNIT="c")
 
 
 DEFAULTMAPLIMIT = [1, 21, 41, 51]
+# =============================================================
 
 
 def _format_utcstr(utc):
@@ -50,8 +53,9 @@ def _unique_legend(legend_list, key_tag, search_label):
     return False
 
 
-def _miniprocess(tr, inplace=True):
-    if not inplace:
+def _miniprocess(tr, override=True):
+    """ simple and fast processing routine """
+    if not override:
         wtr = tr.copy()
     else:
         wtr = tr
@@ -61,115 +65,10 @@ def _miniprocess(tr, inplace=True):
     # wtr.taper(max_percentage=0.05, type='cosine')
     wtr.filter("bandpass",
                freqmin=1,
-               freqmax=10,
+               freqmax=20,
                corners=2,
                zerophase=True)
     return wtr
-
-
-def _append_weighters_results(intr, pd, stat,
-                              phase_association="P1",
-                              index_association=0):
-    """ This function append picks to the trace """
-
-    colordict = {
-        'valid_obs': "forestgreen@20",   # "greenyellow",
-        'outliers':  "orange"
-    }
-    #
-    intr.stats.timemarks = []
-    leglst = []
-    weight_obj = pd[stat][phase_association][index_association]['weight']
-    triage_dict = weight_obj.get_triage_dict()
-
-    if triage_dict['valid_obs']:
-        for lp in triage_dict['valid_obs']:
-            if _unique_legend(leglst, "label", "valid"):
-                intr.stats.timemarks.append(
-                    (UTCDateTime(lp[1]),
-                     {
-                      'color': colordict['valid_obs'],
-                      'ms': 1.5})
-                )
-            else:
-                intr.stats.timemarks.append(
-                    (UTCDateTime(lp[1]),
-                     {'label': "valid",
-                      'color': colordict['valid_obs'],
-                      'ms': 1.5})
-                )
-                #
-                leglst.append(
-                       {'label': "valid",
-                        'color': colordict['valid_obs'],
-                        'ms': 1.5})
-
-    if triage_dict['outliers']:
-        for lp in triage_dict['outliers']:
-            if _unique_legend(leglst, "label", "outlier"):
-                intr.stats.timemarks.append(
-                    (UTCDateTime(lp[1]),
-                     {
-                      'color': colordict['outliers'],
-                      'ms': 1.5})
-                )
-            else:
-                intr.stats.timemarks.append(
-                    (UTCDateTime(lp[1]),
-                     {'label': 'outlier',
-                      'color': colordict['outliers'],
-                      'ms': 1.5})
-                )
-                #
-                leglst.append(
-                     {'label': 'outlier',
-                      'color': colordict['outliers'],
-                      'ms': 1.5})
-
-    return intr
-
-
-def _append_multipick_slice(intr, pd, stat, slicenum=0):
-    """ This function append picks to the trace """
-
-    colordict = {
-        'AIC': "limegreen@20",   # "greenyellow",
-        'FP':  "deepskyblue@20",
-        'BK':  "darkorange@20",
-        'HOS': "navajowhite2@20"
-    }
-    #
-    # import pdb; pdb.set_trace()
-    intr.stats.timemarks = []
-    kp = pd.getStatPick(stat)
-    for pickertag in kp:
-        pickername = pickertag.split("_")[0]
-        if pickertag[-3:].lower() == "mp1":
-            if isinstance(slicenum, int):
-                print("Slice %d - Adding ... %s" % (slicenum, pickername))
-                try:
-                    intr.stats.timemarks.append(
-                        (pd[stat][pickertag][slicenum]['timeUTC_pick'],
-                         {'label': pickername,
-                          'color': colordict[pickername],
-                          'ms': 1.5})
-                    )
-                except IndexError:
-                    print("Sorry, slice %d for %s missing!" % (
-                                                    slicenum, pickername))
-            elif isinstance(slicenum, str) and slicenum.lower() == "all":
-                print("Slice ALL - Adding ... %s" % pickername)
-                for dd in pd[stat][pickertag]:
-                    intr.stats.timemarks.append(
-                        (dd['timeUTC_pick'],
-                         {'label': pickername,
-                          'color': colordict[pickername],
-                          'ms': 1.5})
-                        )
-            else:
-                print("ERROR! slicenum must either be a digit or ")
-
-    return intr
 
 
 def obspyTrace2GMT(tr,
@@ -177,10 +76,26 @@ def obspyTrace2GMT(tr,
                    show=True,
                    uncertainty_center=None,
                    uncertainty_window=None,
-                   big_x_tick_interval=5,
-                   small_x_tick_interval=1,
+                   #
+                   big_x_tick_interval=None,
+                   small_x_tick_interval=None,
+                   big_y_tick_interval=None,
+                   small_y_tick_interval=None,
+                   # #
+                   # big_x_tick_interval=5,
+                   # small_x_tick_interval=1,
+                   # big_y_tick_interval=5,
+                   # small_y_tick_interval=1,
+                   #
                    store_name=None):
-    """ Deh, bellissimo!
+    """Plot obspy trace with GMT renders
+
+    Simple wrap around PyGMT library
+
+    Args:
+
+    Returns:
+
     """
     FIGWIDTH = 15  # cm
     FIGHEIGHT = 4  # cm
@@ -190,14 +105,24 @@ def obspyTrace2GMT(tr,
     xmax = max(t)
     ymin = min(tr.data)
     ymax = max(tr.data)
-    #
-    ylabelMaj = int((ymax-ymin)/10.0)
-    ylabelMin = int((ymax-ymin)/50.0)
+
+    # ================================= Set Frame INTERVALs
+
+    if not big_x_tick_interval:
+        xlabelMaj = float((xmax-xmin)/6.0)
+    if not small_x_tick_interval:
+        xlabelMin = float((xmax-xmin)/30.0)
+    if not big_y_tick_interval:
+        ylabelMaj = int((ymax-ymin)/10.0)
+    if not small_y_tick_interval:
+        ylabelMin = int((ymax-ymin)/50.0)
+
+    # =====================================================
 
     region = [xmin, xmax, ymin, ymax]
     projection = "X%dc/%d" % (FIGWIDTH, FIGHEIGHT)
 
-    frame = ["xa%.1ff%.1f" % (big_x_tick_interval, small_x_tick_interval,),
+    frame = ["xa%.1ff%.1f" % (xlabelMaj, xlabelMin),
              "ya%df%d" % (ylabelMaj, ylabelMin),
              "WS", "x+ltime(s)", "y+lcounts"]
 
@@ -268,4 +193,5 @@ def obspyTrace2GMT(tr,
 
     if isinstance(store_name, str):
         # remember to use extension "*.png - *.pdf"
+        logger.info("Storing figure: %s" % store_name)
         fig.savefig(store_name)

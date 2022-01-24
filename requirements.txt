@@ -1,4 +1,4 @@
-numpy>=1.13.3
-pygmt>=0.5.0
-obspy>=1.2.2
+numpy==1.19.5
+pygmt==v0.5.0
+obspy==1.2.2
 PyYAML>=3.13
