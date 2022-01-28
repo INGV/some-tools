@@ -1,0 +1,7 @@
+include *.in
+include *.md
+include config/*.yml
+include requirements.txt
+recursive-include books *.ipynb
+recursive-include tests_data *.mseed
+recursive-include tests_data *.SAC

@@ -1,0 +1,16 @@
+some_tools_version: "0.0.1"
+
+pygmt_config:
+  MAP_FRAME_TYPE: "plain"
+  FORMAT_GEO_MAP: "ddd.xx"  # "ddd.xxF"
+  MAP_GRID_CROSS_SIZE_PRIMARY: "Op"
+  MAP_GRID_CROSS_SIZE_SECONDARY: "0p"
+  PROJ_LENGTH_UNIT: "c"
+  FONT_ANNOT_PRIMARY: "8p,0"  # 0 normal, 1 bold, 2 italic
+  FONT_LABEL: "11p,1"
+
+additional_config:
+  default_expand_map_lon: 0.5  # decimal degree
+  default_expand_map_lat: 0.2  # decimal degree
+  default_proj: "JM11"
+  default_frame: "M11"

@@ -7,7 +7,7 @@ import sys
 import yaml
 from pathlib import Path
 from obspy import read, Stream
-from some_tools.plotting import plot_pygmt as PG
+from some_tools import plot_pygmt as PG
 
 DEFAULTCONFIG = "/Users/matteo/INGV/SOME-tools/config"
 
