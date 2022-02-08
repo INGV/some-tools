@@ -2,6 +2,9 @@
 # https://github.com/github/gitignore/blob/main/Python.gitignore
 
 
+# Mine
+books/database/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

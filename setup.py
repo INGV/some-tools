@@ -8,7 +8,7 @@ with open("requirements.txt") as f:
 
 setup(
     name="some_tools",
-    version="0.0.1",
+    version="0.0.2",
     author="Matteo Bagagli",
     author_email="matteo.bagagli@ingv.it",
     description="tools and routines for the SOME project",

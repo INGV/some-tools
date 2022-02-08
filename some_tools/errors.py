@@ -13,3 +13,13 @@ class Error(Exception):
 class BadConfigurationFile(Error):
     """ Raised when important configuration check is not respected """
     pass
+
+
+class MissingAttribute(Error):
+    """ Raised when a mandatory class attribute is missing """
+    pass
+
+
+class FilesNotExisting(Error):
+    """ Raised when a file-path is missing """
+    pass

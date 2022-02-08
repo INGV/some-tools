@@ -1,16 +1,37 @@
-some_tools_version: "0.0.1"
+some_tools_version: 0.0.1
 
+# =============== GLOBAL
 pygmt_config:
-  MAP_FRAME_TYPE: "plain"
-  FORMAT_GEO_MAP: "ddd.xx"  # "ddd.xxF"
-  MAP_GRID_CROSS_SIZE_PRIMARY: "Op"
-  MAP_GRID_CROSS_SIZE_SECONDARY: "0p"
-  PROJ_LENGTH_UNIT: "c"
-  FONT_ANNOT_PRIMARY: "8p,0"  # 0 normal, 1 bold, 2 italic
-  FONT_LABEL: "11p,1"
+  MAP_FRAME_TYPE: plain
+  FORMAT_GEO_MAP: ddd.xx  # "ddd.xxF"
+  MAP_GRID_CROSS_SIZE_PRIMARY: 0p
+  MAP_GRID_CROSS_SIZE_SECONDARY: 0p
+  PROJ_LENGTH_UNIT: c
+  FONT_ANNOT_PRIMARY: 8p,0  # 0 normal, 1 bold, 2 italic
+  FONT_LABEL: 11p,1
 
-additional_config:
-  default_expand_map_lon: 0.5  # decimal degree
-  default_expand_map_lat: 0.2  # decimal degree
-  default_proj: "JM11"
-  default_frame: "M11"
+# =============== Map related
+map_config:
+  auto_scale: True  # automatically determine the region interval and projection Lon/Lat
+  map_region: [1, 21, 41, 51]  # minlon, maxlon, minlat, maxlat
+  expand_map_lon: 1.0
+  expand_map_lat: 1.0
+  map_projection: m     # (M) mercator / (G) perspective / (L) Lambert
+  auto_frame: False
+  map_frame:
+    big_x_tick_interval: 1.0
+    small_x_tick_interval: 0.5
+    big_y_tick_interval: 0.5
+    small_y_tick_interval: 0.25
+    show_axis: False  # combination of W E S N / False --> no ax shown
+  fig_scale: 12 # centimeter
+  plot_grid: True
+  magnitude_scale: 0.5  # circle diameter for mag 1 event
+
+# =============== Section related
+sect_config:
+  sect_projection: "X11"
+  sect_frame: ["xa1f0.5", "ya0.5f0.25", "WS"]
+  sect_region: ["xa1f0.5", "ya0.5f0.25", "WS"]
+
+# =============== Trace-plot related

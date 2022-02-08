@@ -5,58 +5,58 @@ Thanks to PyGMT
 
 import yaml
 import pygmt
-from obspy import UTCDateTime
-import numpy as np
+from pathlib import Path, PurePath
 import logging
+#
+import numpy as np
+import pandas as pd
+import obspy
+from obspy import UTCDateTime
+# Some Tools related
+import some_tools as ST
 import some_tools.errors as STE
-from pathlib import Path
+
 
 logger = logging.getLogger(__name__)
 
+KM = 0.001
+MT = 1000
+DEFAULTSCONFIGFILE = (str(PurePath(ST.__file__).parent) +
+                      "/config/pygmt_defaults.yml")
+
 
 # ====================================================================
-# ================================================  Private functions
-def _get_conf(filepath, check_version=True):
+# =======================================  Module's Private Functions
+def __get_conf__(filepath, check_version=True):
     """ Simple function to unpack the YAML configuration file
         configuration file and return as a dict.
     """
-    from some_tools import __version__
+    stver = ST.__version__
 
     # Create dict
     try:
         with open(filepath, "rt") as qfc:
             outDict = yaml.load(qfc, Loader=yaml.FullLoader)
-    except KeyError as err:
+    except KeyError:
         raise STE.BadConfigurationFile("Wrong key name/type!")
 
     # --- Check Versions
     if check_version:
-        if __version__.lower() != outDict['some_tools_version']:
+        if stver.lower() != outDict['some_tools_version']:
             raise STE.BadConfigurationFile("SOME-TOOLS version [%s] and "
                                            "CONFIG version [%s] differs!" %
-                                           (__version__,
+                                           (stver,
                                             outDict['some_tools_version']))
     #
     return outDict
 
+
 # ====================================================================
-# ====================================================================
-# ====================================================================
+# ============================================  Module's Import Setup
 
-
-# pygmt_conf = _get_conf("config/pygmt_defaults.yml")
-
-
-# ========================================  PyGMT defaults
-pygmt.config(MAP_FRAME_TYPE="plain")
-pygmt.config(FORMAT_GEO_MAP="ddd.xx")
-pygmt.config(FORMAT_GEO_MAP="ddd.xxF")
-# pygmt.config(FONT_ANNOT_PRIMARY="8p,2")  # 0 normal, 1 bold, 2 italic
-pygmt.config(FONT_ANNOT_PRIMARY="8p,0")  # 0 normal, 1 bold, 2 italic
-pygmt.config(FONT_LABEL="11p,1")
-pygmt.config(PROJ_LENGTH_UNIT="c")
-
-
+# Set global PyGMT config
+DEFAULTS = __get_conf__(DEFAULTSCONFIGFILE, check_version=True)
+pygmt.config(**DEFAULTS['pygmt_config'])
 
 DEFAULTMAPLIMIT = [1, 21, 41, 51]
 MAP_FIG_WIDTH = 12  # cm
@@ -246,87 +246,351 @@ def obspyTrace2GMT(tr,
     return fig
 
 
-# def obspyCatalog2GMT(cat,
-#                      # region=None  # Automatically set by the function
-#                      projection=default_map_projection,
-#                      frame=default_map_frame,
-#                      expand_map_lon=default_expand_map_lon,
-#                      expand_map_lat=default_expand_map_lat,
-#                      use_relief=False,
-#                      relief_grid_file=None,
-#                      use_hillshade=False,
-#                      #
-#                      big_x_tick_interval=None,
-#                      small_x_tick_interval=None,
-#                      big_y_tick_interval=None,
-#                      small_y_tick_interval=None,
-#                      #
-#                      magnitude_scale=0.5,  # cm normalized to Mag=1
-#                      show=True,
-#                      #
-#                      fig_width=MAP_FIG_WIDTH,
-#                      fig_height=MAP_FIG_HEIGHT,
-#                      store_name=None):
-#     """ Transform obspy catalog to PyGMT figure
-#     """
+class SomeMapping(object):
+    """ Base class for geographical plots based on several databases
 
-#     # ======================== Define region
-#     lonlist = []
-#     latlist = []
-#     maglist = []
-#     for _xx, _ev in enumerate(cat):
-#         ev = _ev.preferred_origin()
-#         if not ev:
-#             ev = _ev.origins[0]
-#         #
-#         ev_mag = _ev.preferred_magnitude()
-#         if not ev_mag:
-#             ev_mag = _ev.magnitudes[0]
-#         #
-#         lonlist.append(ev.longitude)
-#         latlist.append(ev.latitude)
-#         maglist.append(ev_mag.mag)
-#     #
-#     minLon, maxLon = np.min(lonlist) - expand_map_lon, np.max(lonlist) + expand_map_lon
-#     minLat, maxLat = np.min(latlist) - expand_map_lat, np.max(latlist) + expand_map_lat
-#     minMag, maxMag = np.min(maglist), np.max(maglist)
-#     #
-#     totev = _xx+1
-#     logger.info("Creating map for %d events ..." % totev)
-#     logger.info("MAP region: [%09.5f / %09.5f / %09.5f / %09.5f]" %
-#                 (minLon, maxLon, minLat, maxLat))
+    Supported database:
+        - pandas.DataFrame
+        - geopandas.DataFrame
+        - obspy.Catalog
 
-#     region = [minLon, maxLon, minLat, maxLat]
+    Class Attributes:
+        df (pandas.DataFrame)
+        grid ()
 
-#     # ========================================
-#     fig = pygmt.Figure()
-#     fig.basemap(region=region, projection=projection, frame=frame)
-#     pygmt.makecpt(cmap="gray", series=[200, 4000, 10])
+    """
+    def __init__(self, database=None, grid_data=None, config_file=None):
+        self.df = None
+        self.grid = None
+        #
+        self.map_region = None
+        self.map_projection = None
+        self.map_frame = None
+        #
+        self.sect_region = None
+        self.sect_projection = None
+        self.sect_frame = None
 
-#     # grid
-#     if use_relief:
-#         if Path(relief_grid_file).exists():
-#             logger.warning("Still to implement the loading of grid files!")  #MB: @develop
-#             grid = pygmt.datasets.load_earth_relief(resolution="10m", region=region)
-#         else:
-#             grid = pygmt.datasets.load_earth_relief(resolution="10m", region=region)
-#         #
-#         if use_hillshade:
-#             dgrid = pygmt.grdgradient(grid=grid, radiance=[20, 180])
-#             fig.grdimage(grid=dgrid, cmap=True)
-#         else:
-#             fig.grdimage(grid=grid, cmap=True)
-#     #
+        if database:
+            self._setup_database(database)
+        if grid_data:
+            self._setup_grid(grid_data)
 
-#     fig.coast(water="skyblue") # land
-#     fig.plot(x=lonlist, y=latlist, style="c0.3c", color="white", pen="0.1,black")
+        self._setup_class_plot_map()
+        self._setup_class_plot_sect()
 
-#     if show:
-#         fig.show(method="external")
+    def _setup_class_plot_sect(self, config_file=None):
+        """ This method will modify the following class-attributes:
+            sect_region, sect_projection, sect_frame
+        """
+        if self.df is None or self.df.empty or not isinstance(self.df, pd.DataFrame):
+            logger.warning("Missing database! `auto_scale` and `auto_frame` "
+                           "options will be ignored!")
+            _miss_df_check = True
+        else:
+            _miss_df_check = False
+        #
+        if config_file:
+            try:
+                _tmp_conf = __get_conf__(
+                          config_file, check_version=True)["sect_config"]
+            except KeyError:
+                raise STE.BadConfigurationFile(
+                  "Missing `sect_config` key in config file: %s" % config_file)
+        else:
+            try:
+                _tmp_conf = DEFAULTS["sect_config"]
+            except KeyError:
+                raise STE.BadConfigurationFile(
+                  "Missing `sect_config` key in config file: DEFAULT")
 
-#     if isinstance(store_name, str):
-#         # remember to use extension "*.png - *.pdf"
-#         logger.info("Storing figure: %s" % store_name)
-#         fig.savefig(store_name)
-#     #
-#     return fig
+        # ---------- Reset Attributes
+        logger.warning("Overriding the default SECT plot class-attributes!")
+        self.sect_region, self.sect_projection, self.sect_frame = None, None, None
+
+    def _setup_class_plot_map(self, config_file=None):
+        """ This method will modify the following class-attributes:
+            map_region, map_projection, map_frame
+        """
+        if self.df is None or self.df.empty or not isinstance(self.df, pd.DataFrame):
+            logger.warning("Missing database! `auto_scale` and `auto_frame` "
+                           "options will be ignored!")
+            _miss_df_check = True
+        else:
+            _miss_df_check = False
+        #
+        if config_file:
+            try:
+                _tmp_conf = __get_conf__(
+                          config_file, check_version=True)["map_config"]
+            except KeyError:
+                raise STE.BadConfigurationFile(
+                  "Missing `map_config` key in config file: %s" % config_file)
+        else:
+            try:
+                _tmp_conf = DEFAULTS["map_config"]
+            except KeyError:
+                raise STE.BadConfigurationFile(
+                  "Missing `map_config` key in config file: DEFAULT")
+
+        # ---------- Reset Attributes
+        logger.warning("Overriding the default MAP plot class-attributes!")
+        self.map_region, self.map_projection, self.map_frame = None, None, None
+
+        # ---------- Auto-Scale
+        if _tmp_conf['auto_scale'] and not _miss_df_check:
+            minLon = np.float(
+                np.min(self.df["LON"]) - _tmp_conf['expand_map_lon'])
+            maxLon = np.float(
+                np.max(self.df["LON"]) + _tmp_conf['expand_map_lon'])
+            minLat = np.float(
+                np.min(self.df["LAT"]) - _tmp_conf['expand_map_lat'])
+            maxLat = np.float(
+                np.max(self.df["LAT"]) + _tmp_conf['expand_map_lat'])
+            #
+            meanLon = minLon + ((maxLon - minLon)/2)
+            meanLat = minLat + ((maxLat - minLat)/2)
+        else:
+            minLon = np.float(_tmp_conf['map_region'][0])
+            maxLon = np.float(_tmp_conf['map_region'][1])
+            minLat = np.float(_tmp_conf['map_region'][2])
+            maxLat = np.float(_tmp_conf['map_region'][3])
+            #
+            meanLon = minLon + ((maxLon - minLon)/2)
+            meanLat = minLat + ((maxLat - minLat)/2)
+
+        # ---------- Auto-Frame
+        if _tmp_conf['auto_frame'] and not _miss_df_check:
+            minLon = np.float(
+                np.min(self.df["LON"]) - _tmp_conf['expand_map_lon'])
+            maxLon = np.float(
+                np.max(self.df["LON"]) + _tmp_conf['expand_map_lon'])
+            minLat = np.float(
+                np.min(self.df["LAT"]) - _tmp_conf['expand_map_lat'])
+            maxLat = np.float(
+                np.max(self.df["LAT"]) + _tmp_conf['expand_map_lat'])
+            #
+            _ax = np.abs(np.float((maxLon-minLon)/6.0))
+            _fx = np.abs(np.float((maxLon-minLon)/30.0))
+            _ay = np.abs(np.float((maxLat-minLat)/6.0))
+            _fy = np.abs(np.float((maxLat-minLat)/30.0))
+        else:
+            _ax = _tmp_conf['map_frame']['big_x_tick_interval']
+            _fx = _tmp_conf['map_frame']['small_x_tick_interval']
+            _ay = _tmp_conf['map_frame']['big_y_tick_interval']
+            _fy = _tmp_conf['map_frame']['small_y_tick_interval']
+
+        # REGION
+        self.map_region = [minLon, maxLon, minLat, maxLat]
+
+        # PROJECTION
+        _projection = "%s%.3f/%.3f/%.3fc" % (
+                        _tmp_conf['map_projection'].upper(),
+                        np.float(meanLon),
+                        np.float(meanLat),
+                        np.float(_tmp_conf['fig_scale']))
+        if _tmp_conf['map_projection'].upper() == "G":
+            _projection += "+a30+t45+v60/60+w0+z250"
+        self.map_projection = _projection
+
+        # FRAME
+        self.map_frame = []
+        self.map_frame.append("xa%.1ff%.1f" % (_ax, _fx))
+        self.map_frame.append("ya%.1ff%.1f" % (_ay, _fy))
+        if _tmp_conf['map_frame']["show_axis"]:
+            self.map_frame.append(_tmp_conf['map_frame']["show_axis"])
+
+    def _setup_grid(self, data):
+        """ For the moment simply associate the grid file """
+        self.grid = data
+        logger.debug("Correctly loaded GRID!")
+
+    def _pd_select_columns(self, evid_prefix="csv_"):
+        """ Select columns from pandas DataFrame and reorder them
+            for the class API
+        """
+        _colnames = tuple(self.df.columns)
+        _mandatory = set(("ID", "LON", "LAT", "DEP", "MAG"))
+        # --- Search and change COLUMNS-NAME
+        for cc in _colnames:
+            if cc.lower().strip() in ("id", "event_id", "eqid", "eq_id", "#"):
+                self.df.rename(columns={cc: "ID"}, errors="raise", inplace=True)
+            # Origin Time
+            elif cc.lower().strip() in ("ot", "origin_time", "utc_datetime", "utc"):
+                self.df.rename(columns={cc: "OT"}, errors="raise", inplace=True)
+            # Longitude
+            elif cc.lower().strip() in ("lon", "longitude", "ev_longitude"):
+                self.df.rename(columns={cc: "LON"}, errors="raise", inplace=True)
+            # Latitude
+            elif cc.lower().strip() in ("lat", "latitude", "ev_latitude"):
+                self.df.rename(columns={cc: "LAT"}, errors="raise", inplace=True)
+            # Depth
+            elif cc.lower().strip() in ("dep", "depth", "ev_depth"):
+                self.df.rename(columns={cc: "DEP"}, errors="raise", inplace=True)
+            # Magnitude
+            elif cc.lower().strip() in ("mag", "magnitude", "ev_magnitude"):
+                self.df.rename(columns={cc: "MAG"}, errors="raise", inplace=True)
+            # Magnitude Type
+            elif cc.lower().strip() in ("magtype", "mag_type", "magnitude_type"):
+                self.df.rename(columns={cc: "MAGTYPE"}, errors="raise", inplace=True)
+            else:
+                continue
+
+        # --- Extract
+        _new_colnames = set(self.df.columns)
+        import pdb; pdb.set_trace()
+        # fai il set difference --> se NON VUOTO, printa fuori i MANDATORI con ERR
+        # Se difference vuoto, procedi col QUERY:
+        self.df = self.df[["ID", "OT", "LON", "LAT", "DEP", "MAG", "MAGTYPE"]]
+
+    def _setup_database(self, data):
+        """ Switch among loading data ...
+        """
+        if isinstance(data, str):
+            _data_path = Path(data)
+            if _data_path.is_file() and _data_path.exists():
+                _data_frame = pd.read_csv(_data_path)
+                self._pandas2data(_data_frame)
+            else:
+                raise STE.FilesNotExisting("%s file do not exist!" % data)
+
+        elif isinstance(data, pd.DataFrame):
+            # pandas Dataframe --> simply append
+            self._pandas2data(data)
+            logger.debug("Recognized Pandas DataFrame data type ... loading")
+
+        elif isinstance(data, obspy.Catalog):
+            logger.debug("Recognized ObsPy Catalog data type ... loading")
+            self._obspy2data(data)
+
+        else:
+            logger.error("Data type: %s  not yet supported! Contact maintaner" %
+                         type(data))
+        #
+        logger.debug("Correctly loaded DATABASE!")
+
+    def _pandas2data(self, data_frame):
+        self.df = data_frame.copy()
+        self._pd_select_columns()
+
+    def _obspy2data(self, catalog, evid_prefix="opcat_"):
+        """ If available, it will select the event's preferred solutions
+        """
+        evidlist = []
+        utclist = []
+        lonlist = []
+        latlist = []
+        deplist = []
+        maglist = []
+        magtype = []
+        #
+        for _xx, _ev in enumerate(catalog):
+            if len(_ev.origins) != 0 and len(_ev.magnitudes) != 0:
+                evidx = evid_prefix+str(_xx+1)
+                # --- Select preferred solutions
+                evor = _ev.preferred_origin()
+                if not evor:
+                    evor = _ev.origins[0]
+                evmg = _ev.preferred_magnitude()
+                if not evmg:
+                    evmg = _ev.magnitudes[0]
+                #
+                evidlist.append(evidx)
+                utclist.append(evor.time.datetime)
+                lonlist.append(evor.longitude)
+                latlist.append(evor.latitude)
+                deplist.append(evor.depth*KM)
+                maglist.append(evmg.mag)
+                magtype.append(evmg.magnitude_type)
+            else:
+                logger.warning("(Event #%d) Have no origins OR magnitudes")
+
+        # --- Create DATAFRAME
+        self.df = pd.DataFrame(
+                    {"ID": evidlist, "OT": utclist,
+                     "LON": lonlist, "LAT": latlist, "DEP": deplist,
+                     "MAG": maglist, "MAGTYPE": magtype}
+                  )
+
+    # === Setter
+    def set_database(self, data):
+        logger.info("Setting database file ...")
+        self._setup_database(data)
+
+    def set_gridfile(self, data=None):
+        """ Data must be a file-path to a *grd file """
+        if not data or data.lower() in ['default', 'd', 'def', 'global']:
+            # Loading default relief file
+            logger.info("Setting grid file ... DEFAULT")
+            _tmp_grid = pygmt.datasets.load_earth_relief(resolution="10m")  # full globe
+            self._setup_grid(_tmp_grid)
+        else:
+            logger.info("Setting grid file ... %s" % data)
+            self._setup_grid(data)
+
+    def set_configfile(self, config_file):
+        logger.info("Configuring class with: %s" % config_file)
+        self._setup_class_plot_map()
+        self._setup_class_plot_sect()
+
+    # === Getter
+    def get_database(self):
+        return self.df
+
+    def get_gridfile(self):
+        return self.grid
+
+    # === Plotting
+    def plot_map(self, map_config_file=None, show=True, store_name=None):
+        """ Create Map using PyGMT library """
+
+        if self.df is None or self.df.empty or not isinstance(self.df, pd.DataFrame):
+            raise STE.MissingAttribute(
+                "Missing DATA-FRAME object. Run `set_database` method first")
+
+        if map_config_file:
+            logger.info("Using configuration file:  %s" % map_config_file)
+            self._setup_class_plot_map(map_config_file)
+
+        # ======================================== FigComposition
+        logger.info("Creating map for %d events ..." % self.df.shape[0])
+        fig = pygmt.Figure()
+
+        fig.basemap(region=self.map_region,
+                    projection=self.map_projection,
+                    frame=self.map_frame)
+
+        pygmt.makecpt(cmap="lightgray", series=[200, 4000, 10])
+
+        # # self.grid = pygmt.datasets.load_earth_relief(resolution="10m", region=self.map_region)
+        # import pdb; pdb.set_trace()
+        if self.grid is not None:
+            _tmp_grid = pygmt.grdcut(self.grid, region=self.map_region)
+            logger.debug("Plotting class grid-file")
+            fig.grdimage(grid=_tmp_grid, shading=True, cmap="globe")  #cmap="lightgray")
+            fig.coast(water="skyblue", shorelines=True, resolution='h')
+        else:
+            fig.coast(water="skyblue", land="gray",
+                      shorelines=True, resolution='h')
+
+        # ======================================== MainPlot
+        fig.plot(x=self.df["LON"], y=self.df["LAT"], style="c0.3c",
+                 color="white", pen="0.1,black")
+
+        if show:
+            fig.show(method="external")
+
+        if isinstance(store_name, str):
+            # remember to use extension "*.png - *.pdf"
+            logger.info("Storing figure: %s" % store_name)
+            fig.savefig(store_name)
+        #
+        return fig
+
+    def plot_section():
+        pass
+
+
+# ================================================================
+# ================================================  General TIPS
+# dgrid = pygmt.grdgradient(grid=grid, radiance=[0, 0]) # custom radiance
