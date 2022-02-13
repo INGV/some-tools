@@ -8,7 +8,7 @@ with open("requirements.txt") as f:
 
 setup(
     name="some_tools",
-    version="0.0.2",
+    version="0.0.3",
     author="Matteo Bagagli",
     author_email="matteo.bagagli@ingv.it",
     description="tools and routines for the SOME project",
@@ -22,8 +22,7 @@ setup(
     package_data={"": ['*.yml', ]},
     #
     data_files=[
-        ('output_dir', ['some_tools/config/pygmt_defaults.yml',
-                        'some_tools/config/plot_config.yml']),
+        ('output_dir', ['some_tools/config/pygmt_defaults.yml', ]),
         ],
     #
     include_package_data=True,

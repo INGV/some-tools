@@ -3,7 +3,6 @@ This module is a wrapper for ADAPT-API results into GMT.
 Thanks to PyGMT
 """
 
-import yaml
 import pygmt
 from pathlib import Path, PurePath
 import logging
@@ -15,6 +14,7 @@ from obspy import UTCDateTime
 # Some Tools related
 import some_tools as ST
 import some_tools.errors as STE
+import some_tools.io as SIO
 
 
 logger = logging.getLogger(__name__)
@@ -24,38 +24,11 @@ MT = 1000
 DEFAULTSCONFIGFILE = (str(PurePath(ST.__file__).parent) +
                       "/config/pygmt_defaults.yml")
 
-
-# ====================================================================
-# =======================================  Module's Private Functions
-def __get_conf__(filepath, check_version=True):
-    """ Simple function to unpack the YAML configuration file
-        configuration file and return as a dict.
-    """
-    stver = ST.__version__
-
-    # Create dict
-    try:
-        with open(filepath, "rt") as qfc:
-            outDict = yaml.load(qfc, Loader=yaml.FullLoader)
-    except KeyError:
-        raise STE.BadConfigurationFile("Wrong key name/type!")
-
-    # --- Check Versions
-    if check_version:
-        if stver.lower() != outDict['some_tools_version']:
-            raise STE.BadConfigurationFile("SOME-TOOLS version [%s] and "
-                                           "CONFIG version [%s] differs!" %
-                                           (stver,
-                                            outDict['some_tools_version']))
-    #
-    return outDict
-
-
 # ====================================================================
 # ============================================  Module's Import Setup
 
 # Set global PyGMT config
-DEFAULTS = __get_conf__(DEFAULTSCONFIGFILE, check_version=True)
+DEFAULTS = SIO._get_conf(DEFAULTSCONFIGFILE, check_version=True)
 pygmt.config(**DEFAULTS['pygmt_config'])
 
 DEFAULTMAPLIMIT = [1, 21, 41, 51]
@@ -276,136 +249,155 @@ class SomeMapping(object):
         if grid_data:
             self._setup_grid(grid_data)
 
-        self._setup_class_plot_map()
-        self._setup_class_plot_sect()
+        self._config_plot_map(config_file)
+        self._config_plot_sect(config_file)
 
-    def _setup_class_plot_sect(self, config_file=None):
-        """ This method will modify the following class-attributes:
-            sect_region, sect_projection, sect_frame
+    def _select_config_file(self, config_file=None):
+        """ Simply return the configuration file DICT (after yalm read)
         """
-        if self.df is None or self.df.empty or not isinstance(self.df, pd.DataFrame):
-            logger.warning("Missing database! `auto_scale` and `auto_frame` "
-                           "options will be ignored!")
-            _miss_df_check = True
-        else:
-            _miss_df_check = False
-        #
         if config_file:
-            try:
-                _tmp_conf = __get_conf__(
-                          config_file, check_version=True)["sect_config"]
-            except KeyError:
-                raise STE.BadConfigurationFile(
-                  "Missing `sect_config` key in config file: %s" % config_file)
+            _tmp_conf_dict = SIO._get_conf(config_file, check_version=True)
         else:
-            try:
-                _tmp_conf = DEFAULTS["sect_config"]
-            except KeyError:
-                raise STE.BadConfigurationFile(
-                  "Missing `sect_config` key in config file: DEFAULT")
+            _tmp_conf_dict = DEFAULTS
+        return _tmp_conf_dict
 
-        # ---------- Reset Attributes
-        logger.warning("Overriding the default SECT plot class-attributes!")
-        self.sect_region, self.sect_projection, self.sect_frame = None, None, None
-
-    def _setup_class_plot_map(self, config_file=None):
-        """ This method will modify the following class-attributes:
-            map_region, map_projection, map_frame
+    def _config_plot_map(self, config_file=None):
+        """ Defines MAP plot region, proj and frame from config file
         """
-        if self.df is None or self.df.empty or not isinstance(self.df, pd.DataFrame):
-            logger.warning("Missing database! `auto_scale` and `auto_frame` "
-                           "options will be ignored!")
-            _miss_df_check = True
-        else:
-            _miss_df_check = False
-        #
-        if config_file:
-            try:
-                _tmp_conf = __get_conf__(
-                          config_file, check_version=True)["map_config"]
-            except KeyError:
-                raise STE.BadConfigurationFile(
-                  "Missing `map_config` key in config file: %s" % config_file)
-        else:
-            try:
-                _tmp_conf = DEFAULTS["map_config"]
-            except KeyError:
-                raise STE.BadConfigurationFile(
-                  "Missing `map_config` key in config file: DEFAULT")
+        _conf_dict = self._select_config_file(config_file)
+        try:
+            _conf_dict = _conf_dict["map_config"]
+        except KeyError:
+            raise STE.BadConfigurationFile(
+              "Missing `map_config` key in config file!")
 
-        # ---------- Reset Attributes
         logger.warning("Overriding the default MAP plot class-attributes!")
-        self.map_region, self.map_projection, self.map_frame = None, None, None
+        self.map_region, self.map_projection, self.map_frame = (
+            self._define_plot_parameters(config_dict=_conf_dict))
+
+    def _config_plot_sect(self, config_file=None):
+        """ Defines MAP plot region, proj and frame from config file
+        """
+        _conf_dict = self._select_config_file(config_file)
+        # check MAP key config
+        try:
+            _conf_dict = _conf_dict["sect_config"]
+        except KeyError:
+            raise STE.BadConfigurationFile(
+              "Missing `sect_config` key in config file!")
+
+        logger.warning("Overriding the default SECT plot class-attributes!")
+        self.sect_region, self.sect_projection, self.sect_frame = (
+            self._define_plot_parameters(config_dict=_conf_dict))
+
+    def _define_plot_parameters(self, config_dict):
+        """ This method will return the values for REGION, PROJ, and
+            FRAME. The format key is the following
+
+            CONFIG_DICT:
+                  auto_scale: True              # automatically determine the region interval and projection Lon/Lat
+                  plot_region: [1, 21, 41, 51]  # Xmin, Xmax, Ymin, Ymax
+                  expand_map_x: 1.0
+                  expand_map_y: 1.0
+                  plot_projection: m     # (M) mercator / (G) perspective / (L) Lambert
+                  auto_frame: False
+                  plot_frame:
+                    big_x_tick_interval: 1.0
+                    small_x_tick_interval: 0.5
+                    big_y_tick_interval: 0.5
+                    small_y_tick_interval: 0.25
+                    annotate_axis: False  # combination of W E S N / False --> no ax-label shown
+                  fig_scale: 12 # centimeter
+
+        """
+        if self.df is None or self.df.empty or not isinstance(self.df, pd.DataFrame):
+            logger.warning("Missing database! `auto_scale` and `auto_frame` "
+                           "options will be ignored!")
+            _miss_df_check = True
+        else:
+            _miss_df_check = False
 
         # ---------- Auto-Scale
-        if _tmp_conf['auto_scale'] and not _miss_df_check:
-            minLon = np.float(
-                np.min(self.df["LON"]) - _tmp_conf['expand_map_lon'])
-            maxLon = np.float(
-                np.max(self.df["LON"]) + _tmp_conf['expand_map_lon'])
-            minLat = np.float(
-                np.min(self.df["LAT"]) - _tmp_conf['expand_map_lat'])
-            maxLat = np.float(
-                np.max(self.df["LAT"]) + _tmp_conf['expand_map_lat'])
-            #
-            meanLon = minLon + ((maxLon - minLon)/2)
-            meanLat = minLat + ((maxLat - minLat)/2)
-        else:
-            minLon = np.float(_tmp_conf['map_region'][0])
-            maxLon = np.float(_tmp_conf['map_region'][1])
-            minLat = np.float(_tmp_conf['map_region'][2])
-            maxLat = np.float(_tmp_conf['map_region'][3])
-            #
-            meanLon = minLon + ((maxLon - minLon)/2)
-            meanLat = minLat + ((maxLat - minLat)/2)
+        if config_dict['auto_scale'] and not _miss_df_check:
+            Xmin = np.float(
+                np.min(self.df["LON"]) - config_dict['expand_map_x'])
+            Xmax = np.float(
+                np.max(self.df["LON"]) + config_dict['expand_map_x'])
+            Ymin = np.float(
+                np.min(self.df["LAT"]) - config_dict['expand_map_y'])
+            Ymax = np.float(
+                np.max(self.df["LAT"]) + config_dict['expand_map_y'])
 
-        # ---------- Auto-Frame
-        if _tmp_conf['auto_frame'] and not _miss_df_check:
-            minLon = np.float(
-                np.min(self.df["LON"]) - _tmp_conf['expand_map_lon'])
-            maxLon = np.float(
-                np.max(self.df["LON"]) + _tmp_conf['expand_map_lon'])
-            minLat = np.float(
-                np.min(self.df["LAT"]) - _tmp_conf['expand_map_lat'])
-            maxLat = np.float(
-                np.max(self.df["LAT"]) + _tmp_conf['expand_map_lat'])
-            #
-            _ax = np.abs(np.float((maxLon-minLon)/6.0))
-            _fx = np.abs(np.float((maxLon-minLon)/30.0))
-            _ay = np.abs(np.float((maxLat-minLat)/6.0))
-            _fy = np.abs(np.float((maxLat-minLat)/30.0))
         else:
-            _ax = _tmp_conf['map_frame']['big_x_tick_interval']
-            _fx = _tmp_conf['map_frame']['small_x_tick_interval']
-            _ay = _tmp_conf['map_frame']['big_y_tick_interval']
-            _fy = _tmp_conf['map_frame']['small_y_tick_interval']
+            Xmin = np.float(
+                config_dict['plot_region'][0] - config_dict['expand_map_x'])
+            Xmax = np.float(
+                config_dict['plot_region'][1] + config_dict['expand_map_x'])
+            Ymin = np.float(
+                config_dict['plot_region'][2] - config_dict['expand_map_y'])
+            Ymax = np.float(
+                config_dict['plot_region'][3] + config_dict['expand_map_y'])
+        #
+        Xmean = Xmin + ((Xmax - Xmin)/2)
+        Ymean = Ymin + ((Ymax - Ymin)/2)
 
         # REGION
-        self.map_region = [minLon, maxLon, minLat, maxLat]
+        _region = [Xmin, Xmax, Ymin, Ymax]
 
         # PROJECTION
         _projection = "%s%.3f/%.3f/%.3fc" % (
-                        _tmp_conf['map_projection'].upper(),
-                        np.float(meanLon),
-                        np.float(meanLat),
-                        np.float(_tmp_conf['fig_scale']))
-        if _tmp_conf['map_projection'].upper() == "G":
+                        config_dict['plot_projection'].upper(),
+                        np.float(Xmean),
+                        np.float(Ymean),
+                        np.float(config_dict['fig_scale']))
+        if config_dict['plot_projection'].upper() == "G":
             _projection += "+a30+t45+v60/60+w0+z250"
-        self.map_projection = _projection
+
+        # ---------- Auto-Frame
+        if config_dict['auto_frame'] and not _miss_df_check:
+            Xmin = np.float(
+                np.min(self.df["LON"]) - config_dict['expand_map_x'])
+            Xmax = np.float(
+                np.max(self.df["LON"]) + config_dict['expand_map_x'])
+            Ymin = np.float(
+                np.min(self.df["LAT"]) - config_dict['expand_map_y'])
+            Ymax = np.float(
+                np.max(self.df["LAT"]) + config_dict['expand_map_y'])
+            #
+            _ax = np.abs(np.float((Xmax-Xmin)/5.0))
+            _fx = np.abs(np.float((Xmax-Xmin)/30.0))
+            _ay = np.abs(np.float((Ymax-Ymin)/5.0))
+            _fy = np.abs(np.float((Ymax-Ymin)/30.0))
+        else:
+            _ax = config_dict['plot_frame']['big_x_tick_interval']
+            _fx = config_dict['plot_frame']['small_x_tick_interval']
+            _ay = config_dict['plot_frame']['big_y_tick_interval']
+            _fy = config_dict['plot_frame']['small_y_tick_interval']
 
         # FRAME
-        self.map_frame = []
-        self.map_frame.append("xa%.1ff%.1f" % (_ax, _fx))
-        self.map_frame.append("ya%.1ff%.1f" % (_ay, _fy))
-        if _tmp_conf['map_frame']["show_axis"]:
-            self.map_frame.append(_tmp_conf['map_frame']["show_axis"])
+        _frame = []
+        _frame.append("xa%.1ff%.1f" % (_ax, _fx))
+        _frame.append("ya%.1ff%.1f" % (_ay, _fy))
+        if config_dict['plot_frame']["annotate_axis"]:
+            _frame.append(config_dict['plot_frame']["annotate_axis"])
+        else:
+            _frame.append("snwe")
+        #
+        return _region, _projection, _frame
 
     def _setup_grid(self, data):
         """ For the moment simply associate the grid file """
         self.grid = data
         logger.debug("Correctly loaded GRID!")
 
-    def _pd_select_columns(self, evid_prefix="csv_"):
+    def _pd_add_evid_column(self):
+        """ If you arrive here is because you need to create an
+            automatic ID
+        """
+        self.df['ID'] = ["sometools_" + str(cc)
+                         for cc in range(1, len(self.df)+1)]
+
+    def _pd_select_columns(self):
         """ Select columns from pandas DataFrame and reorder them
             for the class API
         """
@@ -438,10 +430,28 @@ class SomeMapping(object):
 
         # --- Extract
         _new_colnames = set(self.df.columns)
-        import pdb; pdb.set_trace()
-        # fai il set difference --> se NON VUOTO, printa fuori i MANDATORI con ERR
-        # Se difference vuoto, procedi col QUERY:
-        self.df = self.df[["ID", "OT", "LON", "LAT", "DEP", "MAG", "MAGTYPE"]]
+        _missing_fields = list(_mandatory.difference(_new_colnames))
+
+        # Check if ID is missing and create a new one
+        if "ID" in _missing_fields:
+            self._pd_add_evid_column()
+        # Recheck for other missing mandatory fields
+        _new_colnames = set(self.df.columns)
+        _missing_fields = list(_mandatory.difference(_new_colnames))
+        if _missing_fields:
+            raise STE.MissingParameter("I'm missing mandatory field: %s" %
+                                       _missing_fields)
+
+        # If arrived here, we have all mandatory fields !!!
+        # Try to collect as much as possible, otherwise take only mandatory
+        try:
+            self.df = self.df[[
+                "ID", "OT", "LON", "LAT", "DEP", "MAG", "MAGTYPE"]]
+        except KeyError as err:
+            logger.warning("Only MANDATORY field extracted. "
+                           "Missing additional %s" %
+                           err.args[0].split("not")[0].strip())
+            self.df = self.df[_mandatory]
 
     def _setup_database(self, data):
         """ Switch among loading data ...
@@ -512,7 +522,7 @@ class SomeMapping(object):
                      "MAG": maglist, "MAGTYPE": magtype}
                   )
 
-    # === Setter
+    # ========================================================= Setter
     def set_database(self, data):
         logger.info("Setting database file ...")
         self._setup_database(data)
@@ -528,32 +538,40 @@ class SomeMapping(object):
             logger.info("Setting grid file ... %s" % data)
             self._setup_grid(data)
 
-    def set_configfile(self, config_file):
-        logger.info("Configuring class with: %s" % config_file)
-        self._setup_class_plot_map()
-        self._setup_class_plot_sect()
+    def set_config_map(self, config_file=None):
+        logger.info("Configuring MAP with: %s" % config_file)
+        self._config_plot_map(config_file=config_file)
 
-    # === Getter
+    def set_config_sect(self, config_file=None):
+        logger.info("Configuring SECTION with: %s" % config_file)
+        self._config_plot_map(config_file=config_file)
+
+    # ========================================================= Getter
     def get_database(self):
         return self.df
 
     def get_gridfile(self):
         return self.grid
 
-    # === Plotting
-    def plot_map(self, map_config_file=None, show=True, store_name=None):
+    # ========================================================= Plotting
+    def plot_map(self, plot_config=None, show=True, store_name=None):
         """ Create Map using PyGMT library """
 
         if self.df is None or self.df.empty or not isinstance(self.df, pd.DataFrame):
             raise STE.MissingAttribute(
                 "Missing DATA-FRAME object. Run `set_database` method first")
 
-        if map_config_file:
-            logger.info("Using configuration file:  %s" % map_config_file)
-            self._setup_class_plot_map(map_config_file)
+        if isinstance(plot_config, dict):
+            _plt_conf_dict = plot_config
+        elif isinstance(plot_config, str):
+            # Load config file and extract ONLY map_plot key
+            _plt_conf_dict = SIO._get_conf(
+                                plot_config, check_version=True)['map_plot']
+        else:
+            _plt_conf_dict = DEFAULTS["map_plot"]
 
         # ======================================== FigComposition
-        logger.info("Creating map for %d events ..." % self.df.shape[0])
+        logger.info("Creating MAP for %d events ..." % self.df.shape[0])
         fig = pygmt.Figure()
 
         fig.basemap(region=self.map_region,
@@ -562,20 +580,33 @@ class SomeMapping(object):
 
         pygmt.makecpt(cmap="lightgray", series=[200, 4000, 10])
 
-        # # self.grid = pygmt.datasets.load_earth_relief(resolution="10m", region=self.map_region)
-        # import pdb; pdb.set_trace()
-        if self.grid is not None:
+        if self.grid is not None and _plt_conf_dict["show_grid"]:
             _tmp_grid = pygmt.grdcut(self.grid, region=self.map_region)
             logger.debug("Plotting class grid-file")
-            fig.grdimage(grid=_tmp_grid, shading=True, cmap="globe")  #cmap="lightgray")
+            fig.grdimage(grid=_tmp_grid, shading=True, cmap="lightgray")  #cmap="globe"
             fig.coast(water="skyblue", shorelines=True, resolution='h')
         else:
             fig.coast(water="skyblue", land="gray",
                       shorelines=True, resolution='h')
 
         # ======================================== MainPlot
-        fig.plot(x=self.df["LON"], y=self.df["LAT"], style="c0.3c",
-                 color="white", pen="0.1,black")
+        _plot_df = self.df.sort_values(["MAG"], ascending=[False])
+
+        if _plt_conf_dict['scale_magnitude']:
+            fig.plot(x=_plot_df["LON"],
+                     y=_plot_df["LAT"],
+                     # size=0.03 * _plot_df["MAG"],
+                     size=_plt_conf_dict['event_size'] * (2 ** _plot_df["MAG"]),
+                     style="cc",
+                     color=_plt_conf_dict['event_color'],
+                     pen="0.25p,black")
+        else:
+            fig.plot(x=_plot_df["LON"],
+                     y=_plot_df["LAT"],
+                     size=_plt_conf_dict['event_size'],
+                     style="cc",
+                     color=_plt_conf_dict['event_color'],
+                     pen="0.25p,black")
 
         if show:
             fig.show(method="external")
@@ -587,8 +618,454 @@ class SomeMapping(object):
         #
         return fig
 
-    def plot_section():
-        pass
+# =============================================================
+# ================================================   SECTION
+# =============================================================
+
+
+class SomeSection(object):
+    """ Base class to plot depth-sections of a seismic dataset
+        along a fixed dataset
+
+    Supported database:
+        - pandas.DataFrame
+        - geopandas.DataFrame
+        - obspy.Catalog
+
+    Class Attributes:
+        df (pandas.DataFrame)
+        grid ()
+
+    """
+    def __init__(self, database, grid_data=None, config_file=None):
+        # --------------- Class Attributes
+        self.df = None
+        self.df_work = None  # the onw with projected events
+        self.grid = None
+        self.config_dict = None
+        #
+        self.profile = None    # auto-scale mod
+        self.event_project_dist = None
+        #
+        self.region = None
+        self.frame = None
+        self.projection = None  # To define the section scale
+
+        # --------------- Init
+        _loader = SIO.Loader(database)
+        self.df = _loader.get_database()
+        self._import_config_file(config_file=config_file)  # config_dict
+        if grid_data:
+            self._load_grid(grid_data)
+
+        # Auto-Set Up
+        self._project_dataframe()   # initialize the `df_work`
+        self._define_plot_parameters()
+
+    def _select_config_file(self, config_file=None):
+        """ Simply return the configuration file DICT (after yalm read)
+        """
+        if config_file:
+            _tmp_conf_dict = SIO._get_conf(config_file, check_version=True)
+        else:
+            _tmp_conf_dict = DEFAULTS
+        return _tmp_conf_dict
+
+    def _import_config_file(self, config_file=None):
+        """ Defines MAP plot region, proj and frame from config file
+        """
+        _conf_dict = self._select_config_file(config_file)
+        # check MAP key config
+        try:
+            self.config_dict = _conf_dict["sect_config"]
+        except KeyError:
+            raise STE.BadConfigurationFile(
+              "Missing `sect_config` key in config file!")
+
+    def _load_grid(self, data):
+        """ For the moment simply associate the grid file """
+        self.grid = data
+        logger.debug("Correctly loaded GRID!")
+
+    def _define_plot_parameters(self):
+        """ This method will return the values for REGION, PROJ, and
+            FRAME. The format key is the following
+
+            CONFIG_DICT:
+                sect_config:
+                  auto_scale: True                # automatically determine the region interval and projection Lon/Lat
+                  section_profile: [1, 46, 21, 46]  # Xmin, Xmax, Ymin, Ymax
+                  event_project_dist: "all" # All or float --> it will project +/- dist events
+                  section_depth: [0, 10]
+                  auto_frame: False
+                  plot_frame:
+                    big_x_tick_interval: 1.0
+                    small_x_tick_interval: 0.5
+                    big_y_tick_interval: 0.5
+                    small_y_tick_interval: 0.25
+                    annotate_axis: False  # combination of W E S N / False --> no ax-label shown
+                  fig_scale: 12 # centimeter
+
+        """
+        if self.df_work is None or self.df_work.empty or not isinstance(self.df_work, pd.DataFrame):
+            raise STE.MissingAttribute("Missing working-database! "
+                                       "Run `_project_dataframe` method first!")
+
+        if self.config_dict is None:
+            raise STE.MissingAttribute(
+                "Missing config-dict! "
+                "Use set_config_file with a valid *.yml first!")
+
+        #
+        logger.info("Setting-up the GMT section plot parameters! "
+                    "(overriding if already present)")
+
+        # ------- REGION
+        origin_X, _, end_X, _ = self._convert_coord_xy()
+        _region = [origin_X, end_X,
+                   self.config_dict['section_profile'][0],
+                   self.config_dict['section_profile'][1]]
+
+        # ------- PROJECTION
+        _projection = "X%.3f/-%.3f" % (
+                        np.float(self.config_dict['fig_dimension'][0]),
+                        np.float(self.config_dict['fig_dimension'][1]))
+
+        # ------- FRAME
+        _ax = self.config_dict['plot_frame']['big_x_tick_interval']
+        _fx = self.config_dict['plot_frame']['small_x_tick_interval']
+        _ay = self.config_dict['plot_frame']['big_y_tick_interval']
+        _fy = self.config_dict['plot_frame']['small_y_tick_interval']
+        #
+        _frame = []
+        _frame.append("xa%.2ff%.2f" % (_ax, _fx))
+        if self.config_dict['plot_frame']["show_grid_lines"]:
+            _frame.append("ya%.2ff%.2fg%.2f@50" % (_ay, _fy, _ay))
+        else:
+            _frame.append("ya%.2ff%.2f" % (_ay, _fy))
+        if self.config_dict['plot_frame']["annotate_axis"]:
+            _frame.append(self.config_dict['plot_frame']["annotate_axis"])
+        else:
+            _frame.append("snwe")
+
+        # ---------- Auto-Scale
+        if self.config_dict['auto_scale']:
+            _region = self._auto_scale_plot(lower_depth_fix=True)
+        if self.config_dict['auto_frame']:
+            _frame = self._auto_frame_plot()
+
+        # Allocate everything
+        self.region = _region
+        self.projection = _projection
+        self.frame = _frame
+
+    # ========= Provate WORK
+
+    def _convert_coord_xy(self):
+        """ Convert profile origin and end to cartesian coordinates """
+        try:
+            _ = self.config_dict["section_profile"]
+        except KeyError:
+            raise STE.MissingAttribute("I need the class attribute profile "
+                                       "[lon1, lat1, lon2, lat2] to work on!")
+        #
+        _tmp_df = pd.DataFrame([
+             [self.config_dict["section_profile"][0],
+              self.config_dict["section_profile"][1]],
+             [self.config_dict["section_profile"][2],
+              self.config_dict["section_profile"][3]]
+            ],
+            columns=["LON", "LAT"])
+        #
+        _conv_df = pygmt.project(
+                        _tmp_df,
+                        convention="pq",
+                        center=[self.config_dict["section_profile"][0],
+                                self.config_dict["section_profile"][1]],
+                        endpoint=[self.config_dict["section_profile"][2],
+                                  self.config_dict["section_profile"][3]],
+                        unit=True,
+                        )
+        #
+        OriginX, OriginY = _conv_df[0][0], _conv_df[1][0]
+        EndX, EndY = _conv_df[0][1], _conv_df[1][1]
+        #
+        return OriginX, OriginY, EndX, EndY
+
+    def _auto_scale_plot(self, lower_depth_fix=True):
+        """ Readjust class plot interval.
+        If lower_depth_fix = True --> minimum_depth plot is equal to 0
+        """
+        if self.df_work is None or self.df_work.empty or not isinstance(self.df_work, pd.DataFrame):
+            raise STE.MissingAttribute("Missing working-database! "
+                                       "Run `_project_dataframe` method first!")
+        #
+        logger.warning(
+            "Auto scaling the class REGION-plot attributes!")
+        Xmin, Xmax = np.min(self.df_work[0]), np.max(self.df_work[0])
+        Ymin, Ymax = np.min(self.df_work[2]), np.max(self.df_work[2])
+
+        if lower_depth_fix:
+            Ymin = 0
+        #
+        _scaled_region = [Xmin, Xmax, Ymin, Ymax]
+        return _scaled_region
+
+    def _auto_frame_plot(self):
+        """ Readjust class plot interval --> FRAME
+        """
+        if self.df_work is None or self.df_work.empty or not isinstance(self.df_work, pd.DataFrame):
+            raise STE.MissingAttribute("Missing working-database! "
+                                       "Run `_project_dataframe` method first!")
+        #
+        logger.warning(
+            "Auto scaling the class FRAME-plot attributes!")
+
+        _ax = (np.max(self.df_work[0]) - np.min(self.df_work[0]))/6.0
+        _fx = (np.max(self.df_work[0]) - np.min(self.df_work[0]))/35.0
+        _ay = (np.max(self.df_work[2]) - np.min(self.df_work[2]))/6.0
+        _fy = (np.max(self.df_work[2]) - np.min(self.df_work[2]))/35.0
+        #
+        _frame = []
+        _frame.append("xa%.2ff%.2f" % (_ax, _fx))
+        if self.config_dict['plot_frame']["show_grid_lines"]:
+            _frame.append("ya%.2ff%.2fg%.2f@50" % (_ay, _fy, _ay))
+        else:
+            _frame.append("ya%.2ff%.2f" % (_ay, _fy))
+        if self.config_dict['plot_frame']["annotate_axis"]:
+            _frame.append(self.config_dict['plot_frame']["annotate_axis"])
+        else:
+            _frame.append("snwe")
+        #
+        return _frame
+
+    def _project_dataframe(self):
+        """ Here we create the `self.df_work` dataframe.
+            return frame and region interval, as the figure projection
+            is X (cartesian coordinates).
+            Here we use pygmt.proj
+
+        # work_df COLS:       0                           1           2      3
+        #              dist_along_profile(km)   perp.distanze(km)   depth   mag
+        """
+
+        try:
+            _ = self.config_dict["section_profile"]
+        except KeyError:
+            raise STE.MissingAttribute("I need the class attribute profile "
+                                       "[lon1, lat1, lon2, lat2] to work on!")
+
+        try:
+            _ = self.config_dict["events_project_dist"]
+        except KeyError:
+            raise STE.MissingAttribute("I need the maximum distance for "
+                                       "projecting earthquakes!")
+
+        # -- Select width
+        if self.config_dict["events_project_dist"].lower() not in [
+           "all", "a", "global", "g"]:
+            _width = [-self.config_dict["events_project_dist"],
+                      self.config_dict["events_project_dist"]]
+        else:
+            # Global
+            _width = [-99999, 99999]
+
+        logger.info("Creating projected DataFrame")
+        self.df_work = pygmt.project(
+            self.df[["LON", "LAT", "DEP", "MAG"]],
+            convention="pqz",
+            center=self.config_dict["section_profile"][0:2],
+            endpoint=self.config_dict["section_profile"][2:4],
+            length="w",
+            width=_width,
+            unit=True)  # p. q will be in km and not in degree! (use False otherwise)
+
+        # Sort by magnitude for plot clearance
+        self.df_work = self.df_work.sort_values(3, ascending=[False])
+
+    def _gridtrack_elevation(self, increment=1.0):
+        """ Create topography profile to be placed adove the section!
+            Increment is in km
+        """
+
+        logger.info("Creating elevation profile")
+
+        _profile = pygmt.project(
+            data=None,
+            center=self.config_dict["section_profile"][0:2],
+            endpoint=self.config_dict["section_profile"][2:4],
+            length="w",
+            generate=str(increment),
+            unit=True)
+
+        _track = pygmt.grdtrack(
+            points=_profile,
+            grid=self.grid,
+            newcolname="elevation")
+
+        return _track[['p', 'elevation']]
+
+    # ========================================================= Setter
+    def set_database(self, data):
+        logger.info("Setting database file ...")
+        _loader = SIO.Loader(data)
+        self.df = _loader.get_database()
+
+    def set_gridfile(self, data=None):
+        """ Data must be a file-path to a *grd file """
+        if not data or data.lower() in ['default', 'd', 'def', 'global']:
+            # Loading default relief file
+            logger.info("Setting grid file ... DEFAULT")
+            _tmp_grid = pygmt.datasets.load_earth_relief(resolution="10m")  # full globe
+            self._load_grid(_tmp_grid)
+        else:
+            logger.info("Setting grid file ... %s" % data)
+            self._load_grid(data)
+
+    def set_config_file(self, config_file=None):
+        """ Defines MAP plot region, proj and frame from config file
+        """
+        logger.info("Configuring SECTION class with: %s" % config_file)
+        self._import_config_file(config_file=config_file)
+
+    def update(self):
+        """ Simply reset and set everything for plotting again """
+        logger.info("Updating plotting parameters")
+        self._project_dataframe()
+        self._define_plot_parameters()
+
+    # ========================================================= Getter
+    def get_database(self):
+        return self.df
+
+    def get_gridfile(self):
+        return self.grid
+
+    def get_condig_dict(self):
+        return self.config_dict
+
+    def plot_section(self, plot_config=None, show=True, store_name=None):
+        """ Create profile, plot section! """
+
+        # ----------------------------------------- Extract config file
+        if isinstance(plot_config, dict):
+            _plt_conf_dict = plot_config
+        elif isinstance(plot_config, str):
+            # Load config file and extract ONLY map_plot key
+            _plt_conf_dict = SIO._get_conf(
+                                plot_config, check_version=True)['sect_plot']
+        else:
+            _plt_conf_dict = DEFAULTS["sect_plot"]
+
+        # ----------------------------------------- PyGMT
+        logger.info("Creating SECT for %d events ..." % self.df_work.shape[0])
+        fig = pygmt.Figure()
+
+        fig.basemap(region=self.region,
+                    projection=self.projection,
+                    frame=self.frame)
+
+        # === All DEM related
+        # pygmt.makecpt(cmap="lightgray", series=[200, 4000, 10])
+        # if self.grid is not None and _plt_conf_dict["show_grid"]:
+        #     _tmp_grid = pygmt.grdcut(self.grid, region=self.map_region)
+        #     logger.debug("Plotting class grid-file")
+        #     fig.grdimage(grid=_tmp_grid, shading=True, cmap="lightgray")  #cmap="globe"
+        #     fig.coast(water="skyblue", shorelines=True, resolution='h')
+        # else:
+        #     fig.coast(water="skyblue", land="gray",
+        #               shorelines=True, resolution='h')
+
+        if _plt_conf_dict['scale_magnitude']:
+            fig.plot(x=self.df_work[0],
+                     y=self.df_work[2],
+                     # size=0.03 * _plot_df["MAG"],
+                     size=_plt_conf_dict['event_size'] * (2 ** self.df_work[3]),
+                     style="cc",
+                     color=_plt_conf_dict['event_color'],
+                     pen="0.25p,black")
+        else:
+            fig.plot(x=self.df_work[0],
+                     y=self.df_work[2],
+                     size=_plt_conf_dict['event_size'],
+                     style="cc",
+                     color=_plt_conf_dict['event_color'],
+                     pen="0.25p,black")
+
+        if show:
+            fig.show(method="external")
+
+        if isinstance(store_name, str):
+            # remember to use extension "*.png - *.pdf"
+            logger.info("Storing figure: %s" % store_name)
+            fig.savefig(store_name)
+        #
+        return fig
+
+    def plot_grid_profile(self, plot_config=None, show=True, store_name=None):
+        """ Create profile, plot section! """
+
+        # ----------------------------------------- Extract config file
+        if isinstance(plot_config, dict):
+            _plt_conf_dict = plot_config
+        elif isinstance(plot_config, str):
+            # Load config file and extract ONLY map_plot key
+            _plt_conf_dict = SIO._get_conf(
+                                plot_config, check_version=True)['sect_plot']
+        else:
+            _plt_conf_dict = DEFAULTS["sect_plot"]
+
+        # ----------------------------------------- PyGMT
+        logger.info("Creating SECT for %d events ..." % self.df_work.shape[0])
+        fig = pygmt.Figure()
+
+        fig.basemap(region=self.region,
+                    projection=self.projection,
+                    frame=self.frame)
+
+        # === All DEM related
+        # pygmt.makecpt(cmap="lightgray", series=[200, 4000, 10])
+        # if self.grid is not None and _plt_conf_dict["show_grid"]:
+        #     _tmp_grid = pygmt.grdcut(self.grid, region=self.map_region)
+        #     logger.debug("Plotting class grid-file")
+        #     fig.grdimage(grid=_tmp_grid, shading=True, cmap="lightgray")  #cmap="globe"
+        #     fig.coast(water="skyblue", shorelines=True, resolution='h')
+        # else:
+        #     fig.coast(water="skyblue", land="gray",
+        #               shorelines=True, resolution='h')
+
+        if _plt_conf_dict['scale_magnitude']:
+            fig.plot(x=self.df_work[0],
+                     y=self.df_work[2],
+                     # size=0.03 * _plot_df["MAG"],
+                     size=_plt_conf_dict['event_size'] * (2 ** self.df_work[3]),
+                     style="cc",
+                     color=_plt_conf_dict['event_color'],
+                     pen="0.25p,black")
+        else:
+            fig.plot(x=self.df_work[0],
+                     y=self.df_work[2],
+                     size=_plt_conf_dict['event_size'],
+                     style="cc",
+                     color=_plt_conf_dict['event_color'],
+                     pen="0.25p,black")
+
+        if show:
+            fig.show(method="external")
+
+        if isinstance(store_name, str):
+            # remember to use extension "*.png - *.pdf"
+            logger.info("Storing figure: %s" % store_name)
+            fig.savefig(store_name)
+        #
+        return fig
+
+
+
+
+
+
+
 
 
 # ================================================================

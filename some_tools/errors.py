@@ -20,6 +20,11 @@ class MissingAttribute(Error):
     pass
 
 
+class MissingParameter(Error):
+    """ Raised when a mandatory class attribute is missing """
+    pass
+
+
 class FilesNotExisting(Error):
     """ Raised when a file-path is missing """
     pass
