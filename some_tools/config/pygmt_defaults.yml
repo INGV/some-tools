@@ -1,4 +1,4 @@
-some_tools_version: 0.0.3
+some_tools_version: 0.0.4
 
 # =============== GLOBAL
 pygmt_config:
@@ -15,10 +15,8 @@ pygmt_config:
 map_config:
   auto_scale: True              # automatically determine the region interval and projection Lon/Lat
   plot_region: [1, 21, 41, 51]  # Xmin, Xmax, Ymin, Ymax
-  expand_map_x: 1.0
-  expand_map_y: 1.0
   plot_projection: m     # (M) mercator / (G) perspective / (L) Lambert
-  auto_frame: False
+  auto_frame: True
   plot_frame:
     big_x_tick_interval: 1.0
     small_x_tick_interval: 0.5
@@ -28,14 +26,13 @@ map_config:
   fig_scale: 12 # centimeter
 
 map_plot:
-  event_color: "white"
-  event_size: 0.08       # float: represent a mag 1 eventsize if scale==True
+  event_color: "lightgray@20"
+  event_size: 0.05       # float: represent a mag 1 eventsize if scale_magnitude==True
   scale_magnitude: True  # bool: if True plot scaled event
-  plot_elevation: True
+  show_grid: True
 
 # =============== Sect related
 sect_config:
-  # Here you decide region and proj
   auto_scale: True                  # automatically determine the region interval and projection Lon/Lat
   section_profile: [1, 46, 21, 46]  # lon1, lat1, lon2, lat2
   events_project_dist: "all" # All or float --> it will project +/- dist events
@@ -51,8 +48,28 @@ sect_config:
   fig_dimension: [12, 4]  # x/y centimeter
 
 sect_plot:
-  event_color: "green@20"
-  event_size: 0.05       # float: represent a mag 1 eventsize if scale==True
+  event_color: "lightgray@20"
+  event_size: 0.05       # float: represent a mag 1 eventsize if scale_magnitude==True
   scale_magnitude: True  # bool: if True plot scaled event
   plot_elevation: True
 
+# =============== Elevation related
+elevation_config:
+  auto_scale: True
+  section_profile: [1, 46, 21, 46]  # lon1, lat1, lon2, lat2
+  section_elevation: [-1, 6]  # km
+  sampling_dist: 1  #km
+  convert_to_km: True
+  auto_frame: True
+  plot_frame:
+    big_x_tick_interval: 1.0
+    small_x_tick_interval: 0.5
+    big_y_tick_interval: 1.0
+    small_y_tick_interval: 0.5
+    show_grid_lines: True  # will plot major tick grid lines on Y-axis major-tick
+    annotate_axis: "W"  # combination of W E S N / False --> no ax-label shown
+  fig_dimension: [12, 1.5]  # x/y centimeter
+
+elevation_plot:
+  profile_width: "1p"
+  profile_color: "black"
