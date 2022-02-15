@@ -4,6 +4,8 @@
 
 # Mine
 books/database/
+books/*pdf
+books/*png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -223,7 +223,7 @@ def obspyTrace2GMT(tr,
 # ==============================================  MAP
 
 
-class SomeMapping(object):
+class SomeMap(object):
     """ Base class for geographical plots based on several databases
 
     Supported database:
@@ -1005,15 +1005,6 @@ class SomeSection(object):
             _fig.savefig(store_name)
         #
         return _fig
-
-
-
-
-
-
-
-
-
 
 # =============================================================
 # ================================================   SECTION
