@@ -51,7 +51,6 @@ sect_plot:
   event_color: "lightgray@20"
   event_size: 0.05       # float: represent a mag 1 eventsize if scale_magnitude==True
   scale_magnitude: True  # bool: if True plot scaled event
-  plot_elevation: True
 
 # =============== Elevation related
 elevation_config:
@@ -72,4 +71,4 @@ elevation_config:
 
 elevation_plot:
   profile_width: "1p"
-  profile_color: "black"
+  profile_color: "black@0"

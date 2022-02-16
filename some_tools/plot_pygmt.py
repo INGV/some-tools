@@ -487,7 +487,8 @@ class SomeMap(object):
         else:
             fig.plot(x=_plot_df["LON"],
                      y=_plot_df["LAT"],
-                     size=_plt_conf_dict['event_size'],
+                     size=np.full(_plot_df["MAG"].shape[0],
+                                  _plt_conf_dict['event_size']),
                      style="cc",
                      color=_plt_conf_dict['event_color'],
                      pen="0.25p,black")
@@ -898,11 +899,13 @@ class SomeSection(object):
                 else:
                     _fig.plot(x=self.df_work[0],
                               y=self.df_work[2],
-                              size=_plt_conf_dict['event_size'],
+                              size=np.full(self.df_work[3].shape[0],
+                                           _plt_conf_dict['event_size']),
                               style="cc",
                               color=_plt_conf_dict['event_color'],
                               pen="0.25p,black",
                               )
+
         else:
             _fig.basemap(region=self.region,
                          projection=self.projection,
@@ -911,7 +914,6 @@ class SomeSection(object):
             if _plt_conf_dict['scale_magnitude']:
                 _fig.plot(x=self.df_work[0],
                           y=self.df_work[2],
-                          # size=0.03 * _plot_df["MAG"],
                           size=_plt_conf_dict['event_size'] * (2 ** self.df_work[3]),
                           style="cc",
                           color=_plt_conf_dict['event_color'],
@@ -920,81 +922,12 @@ class SomeSection(object):
             else:
                 _fig.plot(x=self.df_work[0],
                           y=self.df_work[2],
-                          size=_plt_conf_dict['event_size'],
+                          size=np.full(self.df_work[3].shape[0],
+                                       _plt_conf_dict['event_size']),
                           style="cc",
                           color=_plt_conf_dict['event_color'],
                           pen="0.25p,black",
                           )
-
-        if show:
-            _fig.show(method="external")
-
-        if isinstance(store_name, str):
-            # remember to use extension "*.png - *.pdf"
-            logger.info("Storing figure: %s" % store_name)
-            _fig.savefig(store_name)
-        #
-        return _fig
-
-    def plot_elevation_profile(self, plot_config=None,
-                               show=True, store_name=None,
-                               in_fig=None, panel=None):
-        """ Create profile, plot section! """
-
-        if not self.grid:
-            raise STE.MissingAttribute("Missing class grid-file!")
-
-        # ----------------------------------------- Extract config file
-        if isinstance(plot_config, dict):
-            _plt_conf_dict = plot_config
-        elif isinstance(plot_config, str):
-            # Load config file and extract ONLY map_plot key
-            _plt_conf_dict = SIO._get_conf(
-                                plot_config, check_version=True)['sect_elevation_plot']
-        else:
-            _plt_conf_dict = DEFAULTS["sect_elevation_plot"]
-
-        self.fig_elevation_width = _plt_conf_dict['fig_dimension'][0]
-        self.fig_elevation_height = _plt_conf_dict['fig_dimension'][1]
-
-        # ----------------------------------------- PyGMT
-        logger.info("Creating ELEVATION PROFILE ...")
-        _ele = self._gridtrack_elevation()   # p   elevation
-
-        if (isinstance(_plt_conf_dict['max_scale'], str) and
-           _plt_conf_dict['profile_width'].lower() in ["auto", "a", "automatic"]):
-            _max_ele = np.max(_ele.iloc[:, 1])
-        else:
-            _max_ele = np.float(_plt_conf_dict['max_scale'])
-
-        if in_fig and isinstance(in_fig, pygmt.Figure):
-            do_subplot = True
-            _fig = in_fig
-        else:
-            do_subplot = False
-            _fig = pygmt.Figure()
-
-        if do_subplot and panel:
-            with _fig.set_panel(panel):
-                _fig.plot(x=_ele.iloc[:, 0],
-                          y=_ele.iloc[:, 1],
-                          pen="%s,%s" % (_plt_conf_dict['profile_width'],
-                                         _plt_conf_dict['profile_color']),
-                          #
-                          region=[*self.region[0:2], 0, _max_ele],
-                          projection="X%f/%f" % (self.fig_elevation_width,
-                                                 self.fig_elevation_height),
-                          frame=self.frame)
-        else:
-            _fig.plot(x=_ele.iloc[:, 0],
-                      y=_ele.iloc[:, 1],
-                      pen="%s,%s" % (_plt_conf_dict['profile_width'],
-                                     _plt_conf_dict['profile_color']),
-                      #
-                      region=[*self.region[0:2], 0, _max_ele],
-                      projection="X%f/%f" % (self.fig_elevation_width,
-                                             self.fig_elevation_height),
-                      frame=self.frame)
 
         if show:
             _fig.show(method="external")

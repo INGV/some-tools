@@ -25,6 +25,8 @@ MT = 1000
 
 logger = logging.getLogger(__name__)
 
+# EVTID, EVTDATETIME, EVLA, EVLO, EVDP, EVMAG, EVMAGTYPE
+
 
 # ==================================================================
 
@@ -147,25 +149,25 @@ class Loader(object):
         _mandatory = set(("ID", "LON", "LAT", "DEP", "MAG"))
         # --- Search and change COLUMNS-NAME
         for cc in _colnames:
-            if cc.lower().strip() in ("id", "event_id", "eqid", "eq_id", "#"):
+            if cc.lower().strip() in ("id", "event_id", "eqid", "eq_id", "evtid", "#"):
                 self.df.rename(columns={cc: "ID"}, errors="raise", inplace=True)
             # Origin Time
-            elif cc.lower().strip() in ("ot", "origin_time", "utc_datetime", "utc"):
+            elif cc.lower().strip() in ("ot", "origin_time", "utc_datetime", "evtdatetime", "utc"):
                 self.df.rename(columns={cc: "OT"}, errors="raise", inplace=True)
             # Longitude
-            elif cc.lower().strip() in ("lon", "longitude", "ev_longitude"):
+            elif cc.lower().strip() in ("lon", "longitude", "ev_longitude", "evlo"):
                 self.df.rename(columns={cc: "LON"}, errors="raise", inplace=True)
             # Latitude
-            elif cc.lower().strip() in ("lat", "latitude", "ev_latitude"):
+            elif cc.lower().strip() in ("lat", "latitude", "ev_latitude", "evla"):
                 self.df.rename(columns={cc: "LAT"}, errors="raise", inplace=True)
             # Depth
-            elif cc.lower().strip() in ("dep", "depth", "ev_depth"):
+            elif cc.lower().strip() in ("dep", "depth", "ev_depth", "evdp"):
                 self.df.rename(columns={cc: "DEP"}, errors="raise", inplace=True)
             # Magnitude
-            elif cc.lower().strip() in ("mag", "magnitude", "ev_magnitude"):
+            elif cc.lower().strip() in ("mag", "magnitude", "ev_magnitude", "evmag"):
                 self.df.rename(columns={cc: "MAG"}, errors="raise", inplace=True)
             # Magnitude Type
-            elif cc.lower().strip() in ("magtype", "mag_type", "magnitude_type"):
+            elif cc.lower().strip() in ("magtype", "mag_type", "magnitude_type", "evmagtype"):
                 self.df.rename(columns={cc: "MAGTYPE"}, errors="raise", inplace=True)
             else:
                 continue
