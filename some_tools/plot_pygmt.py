@@ -312,7 +312,7 @@ class SomeMap(object):
         if self.config_dict is None:
             raise STE.MissingAttribute(
                 "Missing config-dict! "
-                "Use set_config_file with a valid *.yml first!")
+                "Use set_configfile with a valid *.yml first!")
 
         logger.info("Setting-up the GMT section plot parameters! "
                     "(overriding if already present)")
@@ -414,11 +414,23 @@ class SomeMap(object):
         """ Data must be a file-path to a *grd file """
         self._load_grid(data)
 
-    def set_config_file(self, config_file=None):
+    def set_configfile(self, config_file=None):
         """ Defines MAP plot region, proj and frame from config file
         """
         logger.info("Configuring MAP class with: %s" % config_file)
         self._import_config_file(config_file=config_file)
+        self._define_plot_parameters()
+
+    def update_configuration(self, **kwargs):
+        """ Update configuration parameters and go on """
+        for kk, vv in kwargs.items():
+            self.config_dict[kk] = vv
+        #
+        self._update()
+
+    def _update(self):
+        """ Just redo the update of plotting parameters """
+        logger.info("Updating plotting parameters")
         self._define_plot_parameters()
 
     # ========================================================= Getter
@@ -427,6 +439,9 @@ class SomeMap(object):
 
     def get_gridfile(self):
         return self.grid
+
+    def get_configdict(self):
+        return self.config_dict
 
     def get_plot_parameters(self):
         od = {}
@@ -605,7 +620,7 @@ class SomeSection(object):
         if self.config_dict is None:
             raise STE.MissingAttribute(
                 "Missing config-dict! "
-                "Use set_config_file with a valid *.yml first!")
+                "Use set_configfile with a valid *.yml first!")
 
         #
         logger.info("Setting-up the GMT section plot parameters! "
@@ -811,7 +826,7 @@ class SomeSection(object):
         """ Data must be a file-path to a *grd file """
         self._load_grid(data)
 
-    def set_config_file(self, config_file=None):
+    def set_configfile(self, config_file=None):
         """ Defines MAP plot region, proj and frame from config file
             Simply reset and set everything for plotting again
         """
@@ -839,7 +854,7 @@ class SomeSection(object):
     def get_gridfile(self):
         return self.grid
 
-    def get_condig_dict(self):
+    def get_configdict(self):
         return self.config_dict
 
     def get_plot_parameters(self):
@@ -1024,14 +1039,14 @@ class SomeElevation(object):
             NEEDS the CONFIG FILE AND GRID
 
         """
-        if not self.grid:
+        if self.grid is None:
             raise STE.MissingAttribute("Missing working-database! "
                                        "Run `_project_dataframe` method first!")
 
         if self.config_dict is None:
             raise STE.MissingAttribute(
                 "Missing config-dict! "
-                "Use set_config_file with a valid *.yml first!")
+                "Use set_configfile with a valid *.yml first!")
 
         #
         logger.info("Setting-up the GMT section plot parameters! "
@@ -1200,7 +1215,7 @@ class SomeElevation(object):
         logger.info("Setting grid file ...")
         self._load_grid(data)
 
-    def set_config_file(self, config_file=None):
+    def set_configfile(self, config_file=None):
         """ Defines MAP plot region, proj and frame from config file
             Simply reset and set everything for plotting again
         """
@@ -1227,7 +1242,7 @@ class SomeElevation(object):
     def get_gridfile(self):
         return self.grid
 
-    def get_condig_dict(self):
+    def get_configdict(self):
         return self.config_dict
 
     def get_plot_parameters(self):
@@ -1244,7 +1259,7 @@ class SomeElevation(object):
                                in_fig=None, panel=None):
         """ Create profile, plot section! """
 
-        if not self.grid:
+        if self.grid is None:
             raise STE.MissingAttribute("Missing class grid-file!")
 
         # ----------------------------------------- Extract config file

@@ -1,4 +1,4 @@
-some_tools_version: 0.0.4
+some_tools_version: 0.0.6
 
 # =============== GLOBAL
 pygmt_config:
@@ -22,7 +22,7 @@ map_config:
     small_x_tick_interval: 0.5
     big_y_tick_interval: 0.5
     small_y_tick_interval: 0.25
-    annotate_axis: False  # combination of W E S N / False --> no ax-label shown
+    annotate_axis: "WS"  # combination of W E S N / False --> no ax-label shown
   fig_scale: 12 # centimeter
 
 map_plot:

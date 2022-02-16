@@ -2,7 +2,7 @@
 
 Here is a project of, indeed, "some tools" for seismic routines and plotting analysis.
 
-VERSION: _0.0.5_
+VERSION: _0.0.6_
 
 DATE: 02-2022
 
