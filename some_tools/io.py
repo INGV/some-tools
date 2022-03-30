@@ -13,8 +13,9 @@ import yaml
 from pathlib import Path
 import logging
 #
-import pandas as pd
 import obspy
+import numpy as np
+import pandas as pd
 #
 import some_tools as ST
 import some_tools.errors as STE
@@ -208,3 +209,303 @@ class Loader(object):
     def set_database(self, database):
         logger.warning("Overriding class database!")
         self._load_database(database)
+
+
+# ==========================================================
+
+
+class MannekenPix2metadata(object):
+    """
+
+    Aquila-Dataset module
+
+        possible attributes:
+            stream_id --> identifier of resulting file
+
+          |         |         |         |         |         |         |         |         |         |
+0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012
+ FILE-NR YEAR MO DA HR MN  SEC     LAT      LON    DEPTH  MAG NETW STAT CMP EPIDIST SAM A P AUTOMAT W F
+                                 DG.ddd   DG.ddd    KM                        KM     Hz   S   SEC
+       3 2009  4 16  6 52 44.000 42.218N  13.109E  10.00 **** MN   AQU  ZNE   28.71 125 0 P ******* * *
+       3 2009  4 16  6 52 44.000 42.218N  13.109E  10.00 **** MN   AQU  ZNE   28.71 125 0 S ******* * *
+       6 2009  4 16  6 52 44.000 42.218N  13.109E  10.00 **** IV   CAMP ZNE   43.10 125 0 P ******* * *
+       6 2009  4 16  6 52 44.000 42.218N  13.109E  10.00 **** IV   CAMP ZNE   43.10 125 0 S ******* * *
+      12 2009  4 16  6 52 44.000 42.218N  13.109E  10.00 **** IV   CESI ZNE   89.05 125 1 P 179.115 1 D
+
+    """
+    def __init__(self, filepath, **kwargs):
+        self.meta = {
+            'NETWORK': [],
+            'STATION': [],
+            'PICKTIME': [],
+            'PHASE': [],
+            'WEIGHT': [],
+            'POLARITY': [],
+            'EPIDIST': [],
+            'SAMPLING': [],
+            'STATUS': []
+        }
+        self.pth = Path(filepath)
+
+    def _unpack_line(self, inline):
+        # out_dict = dict.fromkeys(self.columns_name)
+        #
+        if inline[102] != "*":
+            # ---> WE HAVE A PHASE-PICK <---
+            self.meta['NETWORK'].append(inline[62:64])
+            self.meta['STATION'].append(inline[67:71])
+            _ref_utc = obspy.UTCDateTime(
+                "%04d-%02d-%02dT%02d:%02d:%02.4f" % (
+                    np.int(inline[9:13]),   # yr
+                    np.int(inline[14:16]),  # mn
+                    np.int(inline[17:19]),  # dd
+                    np.int(inline[20:22]),  # hr
+                    np.int(inline[23:25]),  # mn
+                    np.float(inline[26:32]) # ss
+                    )
+                )
+            _pick_utc = _ref_utc + np.float(inline[92:99])
+            self.meta['PICKTIME'].append("%s" % _pick_utc.datetime)
+            self.meta['PHASE'].append(inline[90])
+            self.meta['WEIGHT'].append(inline[100])
+            #
+            if inline[102] == "U":
+                self.meta['POLARITY'].append("positive")
+            elif inline[102] == "D":
+                self.meta['POLARITY'].append("negative")
+            else:
+                self.meta['POLARITY'].append("undecidable")
+            #
+            self.meta['EPIDIST'].append(np.float(inline[76:83]))
+            self.meta['SAMPLING'].append(np.float(inline[84:87]))
+            #
+            if inline[88] == "1":
+                self.meta['STATUS'].append("automatic")
+            else:
+                self.meta['STATUS'].append("manual")
+
+    def read_file(self):
+        # picked_stations = []
+        # metadata = {}
+        with self.pth.open(mode='r') as IN:
+            for xx, line in enumerate(IN):
+                if xx >= 16:
+                    if not line.strip():
+                        break
+                    else:
+                        # collect
+                        self._unpack_line(line)
+
+    def extract_stream(self, dir_path):
+        """ Extract station stream from dir """
+        st = obspy.core.Stream()
+        for stat in self.meta["STATION"]:
+            st += obspy.read(dir_path+"/*"+stat.lower()+"*")
+        #
+        return st
+
+    def set_file(self, filepath):
+        if isinstance(filepath, str) and Path(filepath).isfile:
+            self.pth = Path(filepath)
+            logger.info("Resetting class metadata!")
+            self._read_file()
+        else:
+            raise ValueError("%r is not a file!" % filepath)
+
+    def get_metadata(self):
+        """ Return a data frame object from the stored dir """
+        _df = pd.DataFrame.from_dict(self.meta)
+        _df.sort_values(by="EPIDIST", inplace=True, ignore_index=True)
+        return _df
+
+    def store_metadata(self, outfile, floatformat="%.3f"):
+        _df = pd.DataFrame.from_dict(self.meta)
+        _df.sort_values(by="EPIDIST", inplace=True, ignore_index=True)
+        _df.to_csv(outfile,
+                   sep=',',
+                   index=False,
+                   float_format=floatformat,
+                   na_rep="NA", encoding='utf-8')
+
+    def get_picked_stations(self):
+        """ return the list of picked station """
+        return tuple(self.meta["STATION"])
+
+
+class AquilaDS2seisbench(object):
+    """
+    This class will unpack the final dataset
+
+    """
+
+    def __init__(self, work_dir):
+        self.seisbench_columns = (
+            # Trace
+            'trace_start_time',
+            'trace_dt_s',
+            'trace_npts',
+            'trace_polarity'  # relative to P
+            'trace_eval_p',                 'trace_eval_s',
+            'trace_p_status',               'trace_s_status',
+            'trace_p_weight',               'trace_s_weight',
+            'trace_p_arrival_time',         'trace_s_arrival_time',
+            'trace_p_arrival_sample',       'trace_s_arrival_sample',
+            'trace_p_uncertainty_s',        'trace_s_uncertainty_s',
+            # Station
+            'station_network_code',
+            'station_code',
+            'station_location_code',
+            'station_channels',
+            'station_latitude_deg',
+            'station_longitude_deg',
+            'station_elevation_m',
+            # Path
+            'path_p_travel_s',              'path_s_travel_s',
+            'path_p_residual_s',            'path_s_residual_s',
+            'path_weight_phase_location_p', 'path_weight_phase_location_s',
+            'path_azimuth_deg',
+            'path_back_azimuth_deg',
+            'path_ep_distance_km',
+            'path_hyp_distance_km',
+            # Source
+            'source_origin_time',
+            'source_latitude_deg',
+            'source_longitude_deg',
+            'source_depth_km',
+            'source_origin_uncertainty_s',
+            'source_latitude_uncertainty_deg',
+            'source_longitude_uncertainty_deg',
+            'source_depth_uncertainty_km',
+            'source_stderror_s',
+            'source_gap_deg',
+            'source_horizontal_uncertainty_km',
+            'source_magnitude',
+            'source_magnitude_type'
+        )
+        self.meta = {key: [] for key in self.seisbench_columns}
+        #
+        if not isinstance(work_dir, Path):
+            self.work_dir = Path(work_dir)
+        else:
+            self.work_dir = work_dir
+        #
+        self.phase_file = self.work_dir / "AquilaPSRun2.Sum"
+        self.event_file = self.work_dir / "Run2_reloc2.sum"
+        if not self.phase_file.exists() or not self.event_file.exists():
+            raise AttributeError("Missing PHASEFILE or EVENTFILE in working dir!")
+        #
+        self.df = pd.DataFrame()
+
+    def _fill_na_fields(self, indict):
+        """ Fill empty fields with None """
+        _tmp_ref = set(self.seisbench_columns)
+        _tmp = set(indict)
+        #
+        _miss_kk = tuple(_tmp_ref - _tmp)
+        if _miss_kk:
+            up_dict = {key: None for key in _miss_kk}
+            return indict.update(up_dict)
+        else:
+            return indict
+
+    def _sanity_check_df(self, indf):
+        """ Check that no missing keys / additional keys are inserted """
+        _tmp_ref = set(self.seisbench_columns)
+        _tmp = set(indf.columns())
+        #
+        _miss_kk = tuple(_tmp_ref - _tmp)
+        _add_kk = tuple(_tmp - _tmp_ref)
+        #
+        if _miss_kk:
+            raise ValueError("Missing keys:  %r" % _miss_kk)
+        elif _add_kk:
+            raise ValueError("Additional keys:  %r" % _add_kk)
+        else:
+            # Columns matches reference
+            return True
+
+    # -----------------------------------------------------
+    def _mannekenPix2metadata(self):
+        """ Extract MPX metadata and store to working dict """
+        _mpx = MannekenPix2metadata(self.phase_file)
+        _mpx.read_file()
+        _tmp_df = _mpx.get_metadata()
+        # Map dictionary columns
+        import pdb; pdb.set_trace()
+        _tmp_df.pivot(columns='PHASE', values=["p", "s"])
+
+        # return _mpx, mpx_df
+
+    def extract_stream(self, dir_path):
+        """ Extract station stream from dir """
+        st = obspy.core.Stream()
+        for stat in self.meta["STATION"]:
+            st += obspy.read(dir_path+"/*"+stat.lower()+"*")
+        #
+        return st
+
+    def orchestrator(self):
+        """ This method takes care of extracting everything
+            and orchestrate """
+        pass
+
+
+
+    def set_file(self, filepath):
+        if isinstance(filepath, str) and Path(filepath).isfile:
+            self.pth = Path(filepath)
+            logger.info("Resetting class metadata!")
+            self._read_file()
+        else:
+            raise ValueError("%r is not a file!" % filepath)
+
+    def get_metadata(self):
+        """ Return a data frame object from the stored dir """
+        _df = pd.DataFrame.from_dict(self.meta)
+        _df.sort_values(by="EPIDIST", inplace=True, ignore_index=True)
+        return _df
+
+    def store_metadata(self, outfile, floatformat="%.3f"):
+        _df = pd.DataFrame.from_dict(self.meta)
+        _df.sort_values(by="EPIDIST", inplace=True, ignore_index=True)
+        _df.to_csv(outfile,
+                   sep=',',
+                   index=False,
+                   float_format=floatformat,
+                   na_rep="NA", encoding='utf-8')
+
+
+
+"""
+
+INGV                            SEISBENCH
+path_travel_time_P_s            path_p_travel_s
+path_travel_time_S_s            path_s_travel_s
+path_residual_P_s               path_p_residual_s
+path_residual_S_s               path_s_residual_s
+path_ep_distance_km
+path_hyp_distance_km
+path_azimuth_deg
+path_backazimuth_deg            path_back_azimuth_deg
+path_weight_phase_location_P
+path_weight_phase_location_S
+
+trace_start_time
+trace_dt_s
+trace_npts
+trace_polarity
+trace_eval_P
+trace_P_uncertainty_s
+trace_P_arrival_time
+trace_P_arrival_sample
+trace_eval_S
+trace_S_uncertainty_s
+trace_S_arrival_time
+trace_S_arrival_sample
+
+
+
+station_network_code  station_code  station_location_code  station_channels
+
+
+"""
