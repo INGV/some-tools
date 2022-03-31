@@ -84,7 +84,9 @@ def process_day_mp(mparg):
             missing_events.append(eqid)
             continue
         #
-        MPX, MDF = AQ._mannekenPix2metadata()
+
+        AQ.orchestrator()
+        # MPX, MDF = AQ._mannekenPix2metadata()
         # MPX.store_metadata(storepath / ("%s.metadata.EVENT.csv" % eqid))
         # import pdb; pdb.set_trace()
 

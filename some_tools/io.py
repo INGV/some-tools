@@ -253,7 +253,7 @@ class MannekenPix2metadata(object):
         if inline[102] != "*":
             # ---> WE HAVE A PHASE-PICK <---
             self.meta['NETWORK'].append(inline[62:64])
-            self.meta['STATION'].append(inline[67:71])
+            self.meta['STATION'].append(inline[67:71].strip())
             _ref_utc = obspy.UTCDateTime(
                 "%04d-%02d-%02dT%02d:%02d:%02.4f" % (
                     np.int(inline[9:13]),   # yr
@@ -368,6 +368,7 @@ class AquilaDS2seisbench(object):
             'path_ep_distance_km',
             'path_hyp_distance_km',
             # Source
+            'source_type'
             'source_origin_time',
             'source_latitude_deg',
             'source_longitude_deg',
@@ -383,6 +384,7 @@ class AquilaDS2seisbench(object):
             'source_magnitude_type'
         )
         self.meta = {key: [] for key in self.seisbench_columns}
+        self.st = None  # obspy stream containing traces
         #
         if not isinstance(work_dir, Path):
             self.work_dir = Path(work_dir)
@@ -426,30 +428,105 @@ class AquilaDS2seisbench(object):
 
     # -----------------------------------------------------
     def _mannekenPix2metadata(self):
-        """ Extract MPX metadata and store to working dict """
+        """ Extract MPX metadata and store to working dict.
+
+        Example of extraction MPX object
+
+      NETWORK STATION                    PICKTIME PHASE WEIGHT  POLARITY
+    0      IV    RM21  2009-11-29 21:37:55.424000     P      3  positive
+    EPIDIST  SAMPLING     STATUS
+       6.90     125.0  automatic
+
+        This method will fill in the following fields:
+
+            - 'station_network_code'
+            - 'station_code'
+            - 'trace_p_arrival_time' / 'trace_s_arrival_time'
+            - 'path_ep_distance_km'
+            - 'trace_p_weight' / 'trace_s_weight'
+            - 'trace_polarity_p' / 'trace_polarity_p'
+            - 'trace_p_status', 'trace_s_status', # automanu
+
+        """
         _mpx = MannekenPix2metadata(self.phase_file)
         _mpx.read_file()
         _tmp_df = _mpx.get_metadata()
+
         # Map dictionary columns
-        import pdb; pdb.set_trace()
-        _tmp_df.pivot(columns='PHASE', values=["p", "s"])
+        out_df = pd.DataFrame(columns=[
+             'station_network_code',
+             'station_code',
+             'trace_p_arrival_time', 'trace_s_arrival_time',
+             'path_ep_distance_km',
+             'trace_p_weight', 'trace_s_weight',
+             'trace_polarity_p', 'trace_polarity_s', 'trace_polarity',
+             'trace_p_status', 'trace_s_status'
+            ])
 
-        # return _mpx, mpx_df
+        for index, row in _tmp_df.iterrows():
+            dd = {}
+            dd['station_network_code'] = row["NETWORK"]
+            dd['station_code'] = row["STATION"]
+            dd['path_ep_distance_km'] = row["EPIDIST"]
+            #
+            if row["PHASE"] == "P":
+                dd['trace_p_arrival_time'] = row["PICKTIME"]
+                dd['trace_p_weight'] = row["WEIGHT"]
+                dd['trace_polarity_p'] = row["POLARITY"]
+                dd['trace_p_status'] = row["STATUS"]
+            elif row["PHASE"] == "S":
+                dd['trace_s_arrival_time'] = row["PICKTIME"]
+                dd['trace_s_weight'] = row["WEIGHT"]
+                dd['trace_polarity_s'] = row["POLARITY"]
+                dd['trace_s_status'] = row["STATUS"]
+            else:
+                raise ValueError("UNKNOWN PHASE:  %r  !" % row["PHASE"])
+            #
+            out_df = out_df.append(dd, ignore_index=True)
 
-    def extract_stream(self, dir_path):
+        # COLLAPSE BASED ON COLUMNS  (net.STATION, EPIDIST)
+        _out_gb = out_df.groupby(['station_network_code', 'station_code',
+                                  'path_ep_distance_km'])
+        out_df = _out_gb.apply(lambda x: x)  # to convert back to pd.DataFrame
+        out_df['trace_polarity'] = out_df['trace_polarity_p']
+
+        return out_df, out_df['station_code']
+
+    def _extract_stream(self, picked_stations):
         """ Extract station stream from dir """
         st = obspy.core.Stream()
-        for stat in self.meta["STATION"]:
-            st += obspy.read(dir_path+"/*"+stat.lower()+"*")
+        for stat in picked_stations:
+            st += obspy.read(str(self.work_dir) + "/*"+stat.lower()+"*")
         #
         return st
+
+    def _extract_stream_meta(self):
+        """ Extract station stream from dir """
+        if not self.st:
+            raise AttributeError("Missing Stream! Run `_extract_stream` first!")
+        #
+        out_df = pd.DataFrame(columns=[])
+             # 'station_network_code',
+             # 'station_code',
+             # 'trace_p_arrival_time', 'trace_s_arrival_time',
+             # 'path_ep_distance_km',
+             # 'trace_p_weight', 'trace_s_weight',
+             # 'trace_polarity_p', 'trace_polarity_s', 'trace_polarity',
+             # 'trace_p_status', 'trace_s_status'
 
     def orchestrator(self):
         """ This method takes care of extracting everything
             and orchestrate """
-        pass
 
+        # Extract phase pick information from MPX.Sum
+        _mpx_df, picked_stations = self._mannekenPix2metadata()
 
+        # Import picked waveforms and compute remaining metadata
+        # NB!! They must be in the same directory as MPX.Sum files!
+        self.st = self._extract_stream(picked_stations)
+
+        # Extract stream meta
+        self._extract_stream_meta()
 
     def set_file(self, filepath):
         if isinstance(filepath, str) and Path(filepath).isfile:
