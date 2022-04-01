@@ -36,7 +36,7 @@ parser = argparse.ArgumentParser(
                          "METADATA-CSV and H5DF storage files for SEISBENCH "
                          " and ML use."))
 parser.add_argument('-d', '--datapath', type=str,
-                    help='path to AQUILA dataset structure. MAIN folder!'
+                    help='path to AQUILA dataset structure. MAIN folder! '
                          'Usage of wildcard is allowed.')
 parser.add_argument('-c', '--cpulen', type=str,  # nargs='+',
                     help='number of CPUs to be used for conversion. '
@@ -84,11 +84,8 @@ def process_day_mp(mparg):
             missing_events.append(eqid)
             continue
         #
-
         AQ.orchestrator()
-        # MPX, MDF = AQ._mannekenPix2metadata()
-        # MPX.store_metadata(storepath / ("%s.metadata.EVENT.csv" % eqid))
-        # import pdb; pdb.set_trace()
+        AQ.store_metadata(storepath / ("%s.metadata.EVENT.csv" % eqid))
 
 
 if len(sys.argv) == 1:
@@ -134,20 +131,18 @@ elif outpath.exists() and outpath.is_dir():
 startt = UTCDateTime()
 print("Start:  %s" % startt)
 
-daydir = [x for x in rootpath.iterdir() if x.is_dir()]
-daydir = daydir[0:10]
-process_day_mp((daydir[0], outpath))
-
-
-
+# daydir = [x for x in rootpath.iterdir() if x.is_dir()]
+# daydir = daydir[0:10]
+# process_day_mp((daydir[0], outpath))
 
 # ======== PRODUCTION
-# functarg = [tuple(c) for c in zip(daydir, itertools.repeat(outpath))]
-# with concurrent.futures.ProcessPoolExecutor() as executor:
-#     results = executor.map(process_day_mp, functarg)
-#     # --- Do something with out
-#     # for ii in results:
-#     #     print(any(ii))
+daydir = [x for x in rootpath.iterdir() if x.is_dir()]
+functarg = [tuple(c) for c in zip(daydir, itertools.repeat(outpath))]
+with concurrent.futures.ProcessPoolExecutor() as executor:
+    results = executor.map(process_day_mp, functarg)
+    # --- Do something with out
+    # for ii in results:
+    #     print(any(ii))
 
 endt = UTCDateTime()
 print("End:  %s" % UTCDateTime())

@@ -1,4 +1,4 @@
 __name__ = "some_tools"
-__version__ = "0.0.8"
+__version__ = "0.0.9"
 __author__ = "Matteo Bagagli @ INGV"
-__date__ = "03/2022"
+__date__ = "04/2022"

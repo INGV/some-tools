@@ -265,7 +265,8 @@ class MannekenPix2metadata(object):
                     )
                 )
             _pick_utc = _ref_utc + np.float(inline[92:99])
-            self.meta['PICKTIME'].append("%s" % _pick_utc.datetime)
+            # self.meta['PICKTIME'].append("%s" % _pick_utc.datetime)
+            self.meta['PICKTIME'].append(_pick_utc)
             self.meta['PHASE'].append(inline[90])
             self.meta['WEIGHT'].append(inline[100])
             #
@@ -344,6 +345,7 @@ class AquilaDS2seisbench(object):
             'trace_start_time',
             'trace_dt_s',
             'trace_npts',
+            'trace_name',
             'trace_polarity'  # relative to P
             'trace_eval_p',                 'trace_eval_s',
             'trace_p_status',               'trace_s_status',
@@ -355,7 +357,7 @@ class AquilaDS2seisbench(object):
             'station_network_code',
             'station_code',
             'station_location_code',
-            'station_channels',
+            'station_channel',
             'station_latitude_deg',
             'station_longitude_deg',
             'station_elevation_m',
@@ -383,7 +385,7 @@ class AquilaDS2seisbench(object):
             'source_magnitude',
             'source_magnitude_type'
         )
-        self.meta = {key: [] for key in self.seisbench_columns}
+        self.meta = None  # will be a Pandas Dataframe
         self.st = None  # obspy stream containing traces
         #
         if not isinstance(work_dir, Path):
@@ -484,11 +486,10 @@ class AquilaDS2seisbench(object):
             #
             out_df = out_df.append(dd, ignore_index=True)
 
-        # COLLAPSE BASED ON COLUMNS  (net.STATION, EPIDIST)
-        _out_gb = out_df.groupby(['station_network_code', 'station_code',
-                                  'path_ep_distance_km'])
-        out_df = _out_gb.apply(lambda x: x)  # to convert back to pd.DataFrame
+        out_df["UNIQ"] = out_df["station_network_code"] + "." + out_df["station_code"]
+        out_df = out_df.groupby("UNIQ", as_index=False).agg('first')
         out_df['trace_polarity'] = out_df['trace_polarity_p']
+        out_df.sort_values("path_ep_distance_km", ignore_index=True, inplace=True)
 
         return out_df, out_df['station_code']
 
@@ -500,19 +501,197 @@ class AquilaDS2seisbench(object):
         #
         return st
 
-    def _extract_stream_meta(self):
-        """ Extract station stream from dir """
+    def _extract_stream_meta(self, indict):
+        """ Extract metadata from stream attribute
+
+        'stla': 42.627998, 'stlo': 13.142, 'stel': 1.454,
+        'evla': 42.585999, 'evlo': 13.2177, 'evdp': 5350.0,
+        'dist': 7.7688251, 'az': 306.93469, 'baz': 126.88363,
+
+        To be faster we populate a dictionary and then transform it into
+        a pandas.DataFrame
+
+        Extract indirectly (aftermerging):
+            - path_travel_time_P_s
+            - path_travel_time_S_s
+            - path_residual_P_s
+            - path_residual_S_s
+            - path_ep_distance_km
+            - path_hyp_distance_km
+
+        """
+
         if not self.st:
             raise AttributeError("Missing Stream! Run `_extract_stream` first!")
+
+        # In dict contains the MPX phases metadata. We need here to
+        # complement those by adding the metadata from stream-trace of the
+        # same network-stationcode pairs.
+        # The traces refers all to the picked traces
+
+        _dd = {
+            # Mandatory
+            'station_network_code': [],
+            'station_code': [],
+            # Station
+            'station_location_code': [],
+            'station_channel': [],
+            'station_latitude_deg': [],
+            'station_longitude_deg': [],
+            'station_elevation_m': [],
+            # Source
+            'source_id': [],
+            'source_type': [],
+            # 'source_origin_time': [],
+            'source_latitude_deg': [],
+            'source_longitude_deg': [],
+            'source_depth_km': [],
+            'source_gap_deg': [],
+            # Path
+            'path_azimuth_deg': [],
+            'path_back_azimuth_deg': [],
+            # Trace
+            'trace_name': [],
+            'trace_start_time': [],
+            'trace_dt_s': [],
+            'trace_npts': [],
+            'trace_z_min_counts': [],
+            'trace_n_min_counts': [],
+            'trace_e_min_counts': [],
+            'trace_z_max_counts': [],
+            'trace_n_max_counts': [],
+            'trace_e_max_counts': [],
+            'trace_z_mean_counts': [],
+            'trace_n_mean_counts': [],
+            'trace_e_mean_counts': [],
+            'trace_z_median_counts': [],
+            'trace_n_median_counts': [],
+            'trace_e_median_counts': [],
+            'trace_z_rms_counts': [],
+            'trace_n_rms_counts': [],
+            'trace_e_rms_counts': [],
+            'trace_z_lower_quartile_counts': [],
+            'trace_n_lower_quartile_counts': [],
+            'trace_e_lower_quartile_counts': [],
+            'trace_z_upper_quartile_counts': [],
+            'trace_n_upper_quartile_counts': [],
+            'trace_e_upper_quartile_counts': [],
+            }
+
+        for tr in self.st:
+            # To merge with previous dataframe
+            _dd['station_network_code'].append(tr.stats.network)
+            _dd['station_code'].append(tr.stats.station)
+
+            # Station
+            _dd['station_channel'].append(tr.stats.sac.kevnm[-3:-1])
+            _dd['station_location_code'].append('')  # To ask Carlo
+            _dd['station_latitude_deg'].append(tr.stats.sac.stla)
+            _dd['station_longitude_deg'].append(tr.stats.sac.stlo)
+            _dd['station_elevation_m'].append(tr.stats.sac.stel * MT)
+
+            # Source
+            _dd['source_id'].append("AQ"+tr.stats.sac.kevnm[:-3])
+            _dd['source_type'].append('earthquake')
+            _dd['source_latitude_deg'].append(tr.stats.sac.evla)
+            _dd['source_longitude_deg'].append(tr.stats.sac.evlo)
+            _dd['source_depth_km'].append(tr.stats.sac.evdp)
+            _dd['source_gap_deg'].append(tr.stats.sac.evdp)
+
+            # Path
+            _dd['path_azimuth_deg'].append(tr.stats.sac.az)
+            _dd['path_back_azimuth_deg'].append(tr.stats.sac.baz)
+
+            # Trace
+            _dd['trace_name'].append('.'.join([
+                                "AQ"+tr.stats.sac.kevnm[:-3],
+                                tr.stats.network,
+                                tr.stats.station,
+                                "", tr.stats.sac.kevnm[-3:-1]]))
+            # _dd['trace_start_time'].append("%s" % tr.stats.starttime.datetime)
+            _dd['trace_start_time'].append(tr.stats.starttime)
+            _dd['trace_dt_s'].append(tr.stats.delta)
+            _dd['trace_npts'].append(tr.stats.sac.npts)
+
+            for _comp in ("n", "e", "z"):
+
+                if _comp == tr.stats.sac.kcmpnm.lower():
+                    _dd['trace_%s_min_counts' % _comp].append(
+                        np.min(tr.data)
+                        )
+                    _dd['trace_%s_max_counts' % _comp].append(
+                        np.max(tr.data)
+                        )
+                    _dd['trace_%s_mean_counts' % _comp].append(
+                        np.mean(tr.data)
+                        )
+                    _dd['trace_%s_median_counts' % _comp].append(
+                        np.median(tr.data)
+                        )
+                    _dd['trace_%s_rms_counts' % _comp].append(
+                        np.sqrt(np.mean(np.square(tr.data)))
+                        )
+                    _dd['trace_%s_lower_quartile_counts' % _comp].append(
+                        np.quantile(tr.data, 0.25)
+                        )
+                    _dd['trace_%s_upper_quartile_counts' % _comp].append(
+                        np.quantile(tr.data, 0.75)
+                                    )
+                else:
+                    _dd['trace_%s_min_counts' % _comp].append(np.nan)
+                    _dd['trace_%s_max_counts' % _comp].append(np.nan)
+                    _dd['trace_%s_mean_counts' % _comp].append(np.nan)
+                    _dd['trace_%s_median_counts' % _comp].append(np.nan)
+                    _dd['trace_%s_rms_counts' % _comp].append(np.nan)
+                    _dd['trace_%s_lower_quartile_counts' % _comp].append(np.nan)
+                    _dd['trace_%s_upper_quartile_counts' % _comp].append(np.nan)
+
+        # Finish loading traces:
+        _df = pd.DataFrame.from_dict(_dd)
+        _df["UNIQ"] = _df["station_network_code"] + "." + _df["station_code"]
+        _df = _df.groupby("UNIQ", as_index=False).agg('first')
+        # Merge MPX on UNIQ
+        _df_all = _df.merge(indict, how='outer', on="UNIQ")
+
+        # Calculate Additional Feature
+        self._add_features(_df_all)
+
+        # Sort and allocate to self attribute
+        _df_all.sort_values("path_ep_distance_km", ignore_index=True, inplace=True)
+        return _df_all
+
+    def _add_features(self, indf):
+        """ Append the following columns:
+
+            - path_p_travel_s  trace_p_arrival_sample
+            - path_s_travel_s  trace_s_arrival_sample
+            - path_hyp_distance_km
+
+        """
+        def __convert_utc_to_string(row):
+            row["trace_start_time"] = ("%s" % row["trace_start_time"])
+            row["trace_p_arrival_time"] = ("%s" % row["trace_p_arrival_time"]).datetime
+            row["trace_s_arrival_time"] = ("%s" % row["trace_s_arrival_time"]).datetime
+        # ====
+
+        indf["path_hyp_distance_km"] = (
+            np.sqrt(indf['path_ep_distance_km']**2 +
+                    (indf['source_depth_km'] + indf["station_elevation_m"])**2
+                    ))
         #
-        out_df = pd.DataFrame(columns=[])
-             # 'station_network_code',
-             # 'station_code',
-             # 'trace_p_arrival_time', 'trace_s_arrival_time',
-             # 'path_ep_distance_km',
-             # 'trace_p_weight', 'trace_s_weight',
-             # 'trace_polarity_p', 'trace_polarity_s', 'trace_polarity',
-             # 'trace_p_status', 'trace_s_status'
+        indf['path_p_travel_s'] = (indf['trace_p_arrival_time'] -
+                                   indf['trace_start_time'])
+        indf['trace_p_arrival_sample'] = (indf['path_p_travel_s'] /
+                                          indf['trace_dt_s'])
+        #
+        indf['path_s_travel_s'] = (indf['trace_s_arrival_time'] -
+                                   indf['trace_start_time'])
+        indf['trace_s_arrival_sample'] = (indf['path_s_travel_s'] /
+                                          indf['trace_dt_s'])
+        #
+        # import pdb; pdb.set_trace()
+        # indf = indf.apply (lambda row: __convert_utc_to_string(row), axis=1)
+        return indf
 
     def orchestrator(self):
         """ This method takes care of extracting everything
@@ -526,7 +705,10 @@ class AquilaDS2seisbench(object):
         self.st = self._extract_stream(picked_stations)
 
         # Extract stream meta
-        self._extract_stream_meta()
+        _meta_df = self._extract_stream_meta(_mpx_df)
+
+        # Allocate
+        self.meta = _meta_df.copy(deep=True)
 
     def set_file(self, filepath):
         if isinstance(filepath, str) and Path(filepath).isfile:
@@ -536,21 +718,18 @@ class AquilaDS2seisbench(object):
         else:
             raise ValueError("%r is not a file!" % filepath)
 
-    def get_metadata(self):
-        """ Return a data frame object from the stored dir """
-        _df = pd.DataFrame.from_dict(self.meta)
-        _df.sort_values(by="EPIDIST", inplace=True, ignore_index=True)
-        return _df
+    # def get_metadata(self):
+    #     """ Return a data frame object from the stored dir """
+    #     _df = pd.DataFrame.from_dict(self.meta)
+    #     self.meta.sort_values(by="EPIDIST", inplace=True, ignore_index=True)
 
     def store_metadata(self, outfile, floatformat="%.3f"):
-        _df = pd.DataFrame.from_dict(self.meta)
-        _df.sort_values(by="EPIDIST", inplace=True, ignore_index=True)
-        _df.to_csv(outfile,
-                   sep=',',
-                   index=False,
-                   float_format=floatformat,
-                   na_rep="NA", encoding='utf-8')
-
+        self.meta.to_csv(
+                    outfile,
+                    sep=',',
+                    index=False,
+                    float_format=floatformat,
+                    na_rep="NA", encoding='utf-8')
 
 
 """
