@@ -131,9 +131,11 @@ elif outpath.exists() and outpath.is_dir():
 startt = UTCDateTime()
 print("Start:  %s" % startt)
 
+# # ======== TESTING
 # daydir = [x for x in rootpath.iterdir() if x.is_dir()]
 # daydir = daydir[0:10]
 # process_day_mp((daydir[0], outpath))
+# process_day_mp((Path("/data/AQUILA/2009-Aquila/20091205"), outpath))
 
 # ======== PRODUCTION
 daydir = [x for x in rootpath.iterdir() if x.is_dir()]

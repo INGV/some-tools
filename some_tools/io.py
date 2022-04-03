@@ -250,7 +250,8 @@ class MannekenPix2metadata(object):
     def _unpack_line(self, inline):
         # out_dict = dict.fromkeys(self.columns_name)
         #
-        if inline[102] != "*":
+        # if inline[102] != "*":
+        if inline[92:99] != "*******":
             # ---> WE HAVE A PHASE-PICK <---
             self.meta['NETWORK'].append(inline[62:64])
             self.meta['STATION'].append(inline[67:71].strip())
@@ -688,9 +689,6 @@ class AquilaDS2seisbench(object):
                                    indf['trace_start_time'])
         indf['trace_s_arrival_sample'] = (indf['path_s_travel_s'] /
                                           indf['trace_dt_s'])
-        #
-        # import pdb; pdb.set_trace()
-        # indf = indf.apply (lambda row: __convert_utc_to_string(row), axis=1)
         return indf
 
     def orchestrator(self):
