@@ -25,4 +25,3 @@ additional plotting.
 - `PlottingMap.ipynb`: to plot epicentral map
 - `PlottingSections.ipynb`: to plot depth-sections and elevation-profiles
 - `ConfigFile_README.md`: configuration file (YAML) or ditionary explanation
-

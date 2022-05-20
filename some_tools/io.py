@@ -7,24 +7,33 @@ At the moment can load:
     - Standard CSV (with headers)
     - Obspy Catalog
 
+It also can convert the Aquila DATABASE into a suitable format for seisbench
+
 """
 
 import yaml
 from pathlib import Path
 import logging
+import copy
 #
 import obspy
+from obspy.clients.fdsn.client import Client
 import numpy as np
 import pandas as pd
 #
 import some_tools as ST
 import some_tools.errors as STE
+#
+from seisbench.data.base import WaveformDataWriter
 
 
 KM = 0.001
 MT = 1000
 
-logger = logging.getLogger(__name__)
+
+logging.basicConfig(filename='/tmp/sometools_io.log', level=logging.DEBUG,
+                    format='%(levelname)s %(name)s %(message)s')
+logger=logging.getLogger(__name__)
 
 # EVTID, EVTDATETIME, EVLA, EVLO, EVDP, EVMAG, EVMAGTYPE
 
@@ -93,7 +102,7 @@ class Loader(object):
         logger.debug("Correctly loaded DATABASE!")
 
     def _pandas2data(self, data_frame):
-        self.df = data_frame.copy()
+        self.df = copy.deepcopy(data_frame)
         self._pd_select_columns()
 
     def _obspy2data(self, catalog, evid_prefix="opcat_"):
@@ -198,11 +207,11 @@ class Loader(object):
                            err.args[0].split("not")[0].strip())
             self.df = self.df[_mandatory]
 
-    def get_database(self, copy=False):
+    def get_database(self, copydf=False):
         if self.df is None or self.df.empty or not isinstance(self.df, pd.DataFrame):
             raise STE.MissingAttribute("Missing database!")
-        if copy:
-            return self.df .copy()
+        if copydf:
+            return copy.deepcopy(self.df)
         else:
             return self.df
 
@@ -346,7 +355,7 @@ class AquilaDS2seisbench(object):
             'trace_start_time',
             'trace_dt_s',
             'trace_npts',
-            'trace_name',
+            'trace_name_original',
             'trace_polarity'  # relative to P
             'trace_eval_p',                 'trace_eval_s',
             'trace_p_status',               'trace_s_status',
@@ -386,6 +395,7 @@ class AquilaDS2seisbench(object):
             'source_magnitude',
             'source_magnitude_type'
         )
+        self.inventory = None # will be an obspy station-inventory
         self.meta = None  # will be a Pandas Dataframe
         self.st = None  # obspy stream containing traces
         #
@@ -395,11 +405,29 @@ class AquilaDS2seisbench(object):
             self.work_dir = work_dir
         #
         self.phase_file = self.work_dir / "AquilaPSRun2.Sum"
-        self.event_file = self.work_dir / "Run2_reloc2.sum"
+        self.event_file = self.work_dir / "Run2_reloc2.out"  # or *.sum
         if not self.phase_file.exists() or not self.event_file.exists():
             raise AttributeError("Missing PHASEFILE or EVENTFILE in working dir!")
         #
         self.df = pd.DataFrame()
+
+    def _degreeminute2decimaldegree(self, instr):
+        """
+        Degrees Minutes.m to Decimal Degrees
+        .d = M.m / 60
+        Decimal Degrees = Degrees + .d
+        """
+        _ll = instr.strip()
+        #
+        _dl = np.float(_ll[-5:])
+        _comp = _ll[-6:-5]
+        _deg = np.float(_ll[:-6])
+        #
+        decdeg = _deg + _dl/60.0
+        if _comp.lower() in ("s", "w"):
+            decdeg = -decdeg
+        #
+        return decdeg
 
     def _fill_na_fields(self, indict):
         """ Fill empty fields with None """
@@ -498,9 +526,135 @@ class AquilaDS2seisbench(object):
         """ Extract station stream from dir """
         st = obspy.core.Stream()
         for stat in picked_stations:
-            st += obspy.read(str(self.work_dir) + "/*"+stat.lower()+"*")
+            try:
+                st += obspy.read(str(self.work_dir) + "/*"+stat.lower()+"*")
+            except obspy.io.sac.util.SacIOError:
+                # Some component may be missing, check one-by-one
+                for cc in ('e', 'n', 'z'):
+                    try:
+                        st += obspy.read(str(self.work_dir) + "/*"+stat.lower()+cc)
+                    except obspy.io.sac.util.SacIOError:
+                        logger.error("DIR: %s - STAT: %s - COMPONENT: %s --> Error in reading SAC" %
+                                    (self.work_dir, stat, cc))
+                        continue
+            except TypeError:
+                # Unknown format for obspy, try one-by-one and continue in case
+                for cc in ('e', 'n', 'z'):
+                    try:
+                        st += obspy.read(str(self.work_dir) + "/*"+stat.lower()+cc)
+                    except TypeError:
+                        logger.error("DIR: %s - STAT: %s - COMPONENT: %s --> Error in reading SAC" %
+                                    (self.work_dir, stat, cc))
+                        continue
         #
         return st
+
+#          |         |         |         |         |         |         |         |         |         |
+#01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+#                                              ----------------------------------------------------------------
+#                                              ----------------------------------------------------------------
+#                                              ----------------------------------------------------------------
+# 09/11/22    16:49            earthquake location
+#         -az/dp--step---se =az/dp==step===se -az/dp--step---se
+#         276/ 6 .0458 1.06   8/22 -.001 .796 172/67 -.153 3.16
+#
+# horizontal and vertical single variable standard deviations (68% - one degree of freedom; max 99 km)
+#       seh =   0.56             seh =   0.78             sez =   1.56   quality = b
+#       az  =  -104.             az  =   -14.
+#
+# se of orig =   0.22; # of iterations =   7; dmax =      50.00; sequence number =
+# event type = " "; processing status = " "
+# closest station did not use both p and s
+#
+#    date    origin      lat      long    depth    mag no d1 gap d  rms    avwt   se
+# 20091122 1649 38.31 42n25.48  13e17.13  14.34        10  7 153 1 0.0434  1.00  0.03
+#
+#    seh  sez q sqd  adj in nr   avr  aar nm avxm mdxm sdxm nf avfm mdfm sdfm   vpvs
+#    0.8  1.6 c b c 0.09 10 12 0.000 .008  0            0.0  0            0.0  0.000
+#
+#                      -- travel times and delays --
+
+    def _extract_origintime(self, indf):
+        """ Collect and analize the origin time data
+
+        This project just document the source-related metadata
+
+
+            'source_type'
+            'source_origin_time',
+            'source_latitude_deg',
+            'source_longitude_deg',
+            'source_depth_km',
+            'source_origin_uncertainty_s',
+            'source_latitude_uncertainty_deg',
+            'source_longitude_uncertainty_deg',
+            'source_depth_uncertainty_km',
+            'source_stderror_s',
+            'source_gap_deg',
+            'source_horizontal_uncertainty_km',
+            'source_magnitude',
+            'source_magnitude_type'
+
+        In case needed:  obspy.geodetics.base.kilometer2degrees
+        """
+        origin_dict = {}
+        with open(self.event_file, 'r') as IN:
+            found_origin = False
+            base_line = 0
+            for _xx, _line in enumerate(IN):
+
+                if _line[0:24] == " horizontal and vertical":
+                    found_origin = True
+                    base_line = _xx
+                    continue
+                # -------------------------------------------------
+
+                if found_origin and _xx == base_line+1:
+                    # Extract Error
+                    origin_dict['source_horizontal_uncertainty_km'] = np.float(_line[39:44])
+                    origin_dict['source_depth_uncertainty_km'] = np.float(_line[64:69])
+
+                elif found_origin and _xx == base_line+9:
+
+                    # Extract all the rest
+                    _year = np.int(_line[1:5])
+                    _month = np.int(_line[5:7])
+                    _day = np.int(_line[7:9])
+                    _hour = np.int(_line[10:12])
+                    _min = np.int(_line[12:14])
+                    _sec = np.float(_line[15:20])
+
+                    # Adjust clock time, avoiding error
+                    if _sec == 60.0:
+                        _sec -= 1
+                        _min += 1
+                    if _min == 60.0:
+                        _hour += 1
+                    if _hour == 24.0:
+                        _day += 1
+
+                    origin_dict["source_origin_time"] = obspy.UTCDateTime(
+                        "%04d-%02d-%02dT%02d:%02d:%07.4f" % (
+                            _year, _month, _day, _hour, _min, _sec)
+                        )
+
+                    origin_dict["source_latitude_deg"] = self._degreeminute2decimaldegree(_line[21:29])
+                    origin_dict["source_longitude_deg"] = self._degreeminute2decimaldegree(_line[31:39])
+                    origin_dict["source_depth_km"] = np.float(_line[40:46])
+                    origin_dict["source_gap_deg"] = np.int(_line[60:63])
+                    origin_dict["source_origin_uncertainty_s"] = np.float(_line[66:72])   # It's the RMS
+                    origin_dict['source_magnitude'] = np.nan
+                    origin_dict['source_magnitude_type'] = ""
+
+                elif found_origin and _xx == base_line+10:
+                    # Stope Extracting
+                    break
+
+        # --- Now that I have the dict, I can try to append it to  meta
+        for kk in origin_dict.keys():
+            indf[kk] = origin_dict[kk]
+        #
+        return indf
 
     def _extract_stream_meta(self, indict):
         """ Extract metadata from stream attribute
@@ -552,7 +706,7 @@ class AquilaDS2seisbench(object):
             'path_azimuth_deg': [],
             'path_back_azimuth_deg': [],
             # Trace
-            'trace_name': [],
+            'trace_name_original': [],
             'trace_start_time': [],
             'trace_dt_s': [],
             'trace_npts': [],
@@ -586,7 +740,8 @@ class AquilaDS2seisbench(object):
 
             # Station
             _dd['station_channel'].append(tr.stats.sac.kevnm[-3:-1])
-            _dd['station_location_code'].append('')  # To ask Carlo
+            # _dd['station_location_code'].append('')  # To ask Carlo ---> KHOLE
+            _dd['station_location_code'].append(tr.stats.sac.khole)
             _dd['station_latitude_deg'].append(tr.stats.sac.stla)
             _dd['station_longitude_deg'].append(tr.stats.sac.stlo)
             _dd['station_elevation_m'].append(tr.stats.sac.stel * MT)
@@ -604,11 +759,21 @@ class AquilaDS2seisbench(object):
             _dd['path_back_azimuth_deg'].append(tr.stats.sac.baz)
 
             # Trace
-            _dd['trace_name'].append('.'.join([
-                                "AQ"+tr.stats.sac.kevnm[:-3],
-                                tr.stats.network,
+            _dd['trace_name_original'] = ".".join([
+                                "AQ"+self.work_dir.name,
                                 tr.stats.station,
-                                "", tr.stats.sac.kevnm[-3:-1]]))
+                                tr.stats.network,
+                                tr.stats.sac.khole,
+                                tr.stats.sac.kevnm[-3:-1]])
+
+            # override classic ID with a custom one
+            tr.stats.custom_id = ".".join([
+                                "AQ"+self.work_dir.name,
+                                tr.stats.station,
+                                tr.stats.network,
+                                tr.stats.sac.khole,
+                                tr.stats.sac.kevnm[-3:-1]])
+
             # _dd['trace_start_time'].append("%s" % tr.stats.starttime.datetime)
             _dd['trace_start_time'].append(tr.stats.starttime)
             _dd['trace_dt_s'].append(tr.stats.delta)
@@ -647,11 +812,17 @@ class AquilaDS2seisbench(object):
                     _dd['trace_%s_lower_quartile_counts' % _comp].append(np.nan)
                     _dd['trace_%s_upper_quartile_counts' % _comp].append(np.nan)
 
-        # Finish loading traces:
+        # ---- Finish loading traces:
         _df = pd.DataFrame.from_dict(_dd)
         _df["UNIQ"] = _df["station_network_code"] + "." + _df["station_code"]
         _df = _df.groupby("UNIQ", as_index=False).agg('first')
-        # Merge MPX on UNIQ
+
+        # ---- Merge MPX on UNIQ
+        """ Because indict contains already the information station_network_code_x` and
+        station_code`, to avoid duplicates (like *_x, *_y), we remove them from
+        the indict columns. In fact, the only column that matter is UNIQ.
+        """
+        indict.drop(['station_network_code', 'station_code'], inplace=True, axis=1)
         _df_all = _df.merge(indict, how='outer', on="UNIQ")
 
         # Calculate Additional Feature
@@ -680,54 +851,220 @@ class AquilaDS2seisbench(object):
                     (indf['source_depth_km'] + indf["station_elevation_m"])**2
                     ))
         #
-        indf['path_p_travel_s'] = (indf['trace_p_arrival_time'] -
-                                   indf['trace_start_time'])
+        try:
+            indf['path_p_travel_s'] = (indf['trace_p_arrival_time'] -
+                                       indf['trace_start_time'])
+        except:
+            import pdb; pdb.set_trace()
+
         indf['trace_p_arrival_sample'] = (indf['path_p_travel_s'] /
                                           indf['trace_dt_s'])
+
+        indf['trace_p_arrival_sample'] = (
+            indf['trace_p_arrival_sample'].fillna(-9999).astype('int32'))
         #
         indf['path_s_travel_s'] = (indf['trace_s_arrival_time'] -
                                    indf['trace_start_time'])
         indf['trace_s_arrival_sample'] = (indf['path_s_travel_s'] /
-                                          indf['trace_dt_s'])
+                                                 indf['trace_dt_s'])
+        indf['trace_s_arrival_sample'] = (
+            indf['trace_s_arrival_sample'].fillna(-9999).astype('int32'))
         return indf
+
+
+    def _extract_inventory(self, indf, clientname="INGV"):
+        """ The INDF must have the following keys:
+                - station_network_code
+                - station_code
+                - source_origin_time
+        """
+        client = Client(clientname.upper())
+
+        # --- Check pairs
+        pairs = {}
+        for xx, row in indf.iterrows():
+            net = row['station_network_code']
+            #
+            if not net in pairs.keys():
+                pairs[net] = []
+            #
+            pairs[net].append(row['station_code'])
+        # Unique origin time
+        ot = row['source_origin_time']
+
+        # --- Create inventory
+        inventory = obspy.Inventory()
+        for kk, vv in pairs.items():
+            statxml = client.get_stations(network=kk, station=",".join(vv),
+                                          location='*', channel='*',
+                                          starttime=ot-10,
+                                          endtime=ot+30,
+                                          level="response")
+                                          # attach_response=True)
+            inventory += statxml
+        #
+        return inventory
 
     def orchestrator(self):
         """ This method takes care of extracting everything
             and orchestrate """
 
+        logger.info("Working with:   -->  %s  <--" % self.work_dir.name)
+
         # Extract phase pick information from MPX.Sum
+        logger.info("   ... Extracting  MPX-PHASES")
         _mpx_df, picked_stations = self._mannekenPix2metadata()
 
         # Import picked waveforms and compute remaining metadata
         # NB!! They must be in the same directory as MPX.Sum files!
+        logger.info("   ... Extracting  STREAM")
         self.st = self._extract_stream(picked_stations)
 
         # Extract stream meta
+        logger.info("   ... Extracting  METADATA")
         _meta_df = self._extract_stream_meta(_mpx_df)
 
-        # Allocate
-        self.meta = _meta_df.copy(deep=True)
+        # Extract origin meta (time+loc+dep+errors)
+        logger.info("   ... Extracting  ORIGIN-TIME")
+        _meta_df = self._extract_origintime(_meta_df)
 
-    def set_file(self, filepath):
-        if isinstance(filepath, str) and Path(filepath).isfile:
-            self.pth = Path(filepath)
-            logger.info("Resetting class metadata!")
-            self._read_file()
+        # remove the UNIQ column that was used to merge previous df(s)
+        _meta_df.drop('UNIQ', axis=1, inplace=True)
+
+        # # extract inventory for the working dir pairs
+        # logger.info("   ... Downloading  INVENTORY")
+        # _meta_inv = self._extract_inventory(_meta_df)
+
+        # --- Allocate as class-attribute
+        self.meta = copy.deepcopy(_meta_df)
+        # self.inventory = copy.deepcopy(_meta_inv)
+
+    def get_metadata(self):
+        """ Return a data frame object from the stored dir """
+        # _df = pd.DataFrame.from_dict(self.meta)
+        # self.meta.sort_values(by="EPIDIST", inplace=True, ignore_index=True)
+        if self.meta is not None and not self.meta.empty:
+            return self.meta
         else:
-            raise ValueError("%r is not a file!" % filepath)
+            raise ValueError("Missing or empty dataframe!")
 
-    # def get_metadata(self):
-    #     """ Return a data frame object from the stored dir """
-    #     _df = pd.DataFrame.from_dict(self.meta)
-    #     self.meta.sort_values(by="EPIDIST", inplace=True, ignore_index=True)
+    def get_stream(self):
+        """ Return a data frame object from the stored dir """
+        # _df = pd.DataFrame.from_dict(self.meta)
+        # self.meta.sort_values(by="EPIDIST", inplace=True, ignore_index=True)
+        if self.st is not None and len(self.st) > 0:
+            return self.st
+        else:
+            raise ValueError("Missing or empty dataframe!")
 
-    def store_metadata(self, outfile, floatformat="%.3f"):
-        self.meta.to_csv(
-                    outfile,
-                    sep=',',
-                    index=False,
-                    float_format=floatformat,
-                    na_rep="NA", encoding='utf-8')
+    def get_inventory(self):
+        """ Return an obspy inventory object for the picked stations
+            in the stored dir
+        """
+        if self.inventory is not None and len(self.inventory) > 0:
+            return self.inventory
+        else:
+            raise ValueError("Missing or empty dataframe!")
+
+    def store_metadata(self, outfile, float_format="%.3f"):
+        if self.meta is not None and not self.meta.empty:
+            self.meta.to_csv(
+                        outfile,
+                        sep=',',
+                        index=False,
+                        float_format=float_format,
+                        na_rep="NA", encoding='utf-8')
+        else:
+            raise ValueError("Missing or empty dataframe!")
+
+    def store_inventory(self, outfile):
+        if self.inventory is not None and len(self.inventory) > 0:
+            self.inventory.write(outfile,
+                                 format="STATIONXML")
+        else:
+            raise ValueError("Missing or empty dataframe!")
+
+
+
+def _create_HDF5_seisbench(inst, metadf, outmeta="seisbench_meta", outdf="seisbench_hdf5"):
+    """ Return a seisbench HDF5 copatible object """
+
+    # One per chunk
+    with WaveformDataWriter(outmeta, outdf) as writer:
+        writer.data_format = {
+            'component_order':'ENZ',
+            'dimension_order':'CW',
+            'instrument_response':'',
+            'measurement':'velocity',
+            # 'sampling_rate':sample_freq,  # Understood directly from the code
+            # 'unit':'m/s'
+            'unit': 'counts'
+        }
+
+        for xx, row in metadf.iterrows():
+            _add_st = obspy.core.Stream()
+            for tr in inst:
+                if tr.stats.custom_id == row.trace_name_original:
+                    _add_st += tr
+            #
+            _add_st = _add_st.merge(fill_value='interpolate')
+            # Check E
+            try:
+                # east_data = _add_st.select(channel="*E")[0].data
+                east_data = _add_st.select(component="E")[0].data
+            except IndexError:
+                east_data = np.array([])
+            # Check N
+            try:
+                # north_data = _add_st.select(channel="*N")[0].data
+                north_data = _add_st.select(component="N")[0].data
+            except IndexError:
+                north_data = np.array([])
+            # Check Z
+            try:
+                # depth_data = _add_st.select(channel="*Z")[0].data
+                depth_data = _add_st.select(component="*Z")[0].data
+            except IndexError:
+                depth_data = np.array([])
+
+            # FindMaxArray
+            max_arr = np.max([east_data.size, north_data.size, depth_data.size])
+            if east_data.size == 0:
+                east_data = np.zeros(max_arr, dtype="float32")   # This because of SAC
+            if north_data.size == 0:
+                north_data = np.zeros(max_arr, dtype="float32")  # This because of SAC
+            if depth_data.size == 0:
+                depth_data = np.zeros(max_arr, dtype="float32")  # This because of SAC
+
+            # try:
+            writer.add_trace(row, np.array([
+                east_data, north_data, depth_data]))
+            # except:
+            #     import pdb; pdb.set_trace()
+
+
+       # # ------------ If needed to have a TRIM or processing with Stream
+       # # ------------ Although it would be better maybe to have it at a Class level
+
+
+       #     st_time=UTCDateTime(row.trace_P_arrival_time)-pre
+       #     ##ed_time=row.trace_S_arrival_time+after
+       #     ed_time=UTCDateTime(row.trace_P_arrival_time)+after
+
+       #     st=client.get_waveforms( network=ntw, station=sta, location='*', channel=ch+'*', starttime=st_time-20, endtime=ed_time+20)
+       #     st=st.merge(fill_value='interpolate')
+       #     st=st.merge(fill_value='interpolate')
+
+       #     st = st.trim(starttime=st_time, endtime=ed_time)
+       #     # print(st)
+       #     if len(st[0].data)==len(st[1].data) and len(st[0].data)==len(st[2].data):
+       #         writer.add_trace(row, np.array([st[0].data, st[1].data, st[2].data]))
+       #     #print(len(st[0]),len(st[1]), len(st[2]))
+
+
+
+
+
 
 
 """
@@ -763,3 +1100,70 @@ station_network_code  station_code  station_location_code  station_channels
 
 
 """
+
+
+
+## =================================== SNIPPET from SONJA
+# with WaveformDataWriter(meta_new, hdf5_file) as writer:
+#    writer.data_format = {
+#        'component_order':'ENZ',
+#        'dimension_order':'CW',
+#        'instrument_response':'',
+#        'measurement':'velocity',
+#        'sampling_rate':sample_freq,
+#        'unit':'m/s'
+#    }
+#    for i, row in csv.iterrows():
+#
+#        sta=row.station_code
+#        ntw=row.station_network_code
+#        loc=row.station_location_code
+#        ch=row.station_channels
+#
+#        st_time=UTCDateTime(row.trace_P_arrival_time)-pre
+#        ##ed_time=row.trace_S_arrival_time+after
+#        ed_time=UTCDateTime(row.trace_P_arrival_time)+after
+#
+#        st=client.get_waveforms( network=ntw, station=sta, location='*', channel=ch+'*', starttime=st_time-20, endtime=ed_time+20)
+#        st=st.merge(fill_value='interpolate')
+#        st=st.merge(fill_value='interpolate')
+#
+#        st = st.trim(starttime=st_time, endtime=ed_time)
+#        # print(st)
+#        if len(st[0].data)==len(st[1].data) and len(st[0].data)==len(st[2].data):
+#            writer.add_trace(row, np.array([st[0].data, st[1].data, st[2].data]))
+#        #print(len(st[0]),len(st[1]), len(st[2]))
+##
+
+
+ #    date    origin      lat      long    depth    mag no d1 gap d  rms    avwt   se
+ # 20091122 1649 38.31 42n25.48  13e17.13  14.34        10  7 153 1 0.0434  1.00  0.03
+
+# 20091122 1649 3831 42N25.48 13E17.13 1434   10153  7   4276 6 106  822  80      316B  2/     610                    0 1434
+
+
+#          |         |         |         |         |         |         |         |         |         |
+#01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+#                                              ----------------------------------------------------------------
+#                                              ----------------------------------------------------------------
+#                                              ----------------------------------------------------------------
+# 09/11/22    16:49            earthquake location
+#         -az/dp--step---se =az/dp==step===se -az/dp--step---se
+#         276/ 6 .0458 1.06   8/22 -.001 .796 172/67 -.153 3.16
+#
+# horizontal and vertical single variable standard deviations (68% - one degree of freedom; max 99 km)
+#       seh =   0.56             seh =   0.78             sez =   1.56   quality = b
+#       az  =  -104.             az  =   -14.
+#
+# se of orig =   0.22; # of iterations =   7; dmax =      50.00; sequence number =
+# event type = " "; processing status = " "
+# closest station did not use both p and s
+#
+#    date    origin      lat      long    depth    mag no d1 gap d  rms    avwt   se
+# 20091122 1649 38.31 42n25.48  13e17.13  14.34        10  7 153 1 0.0434  1.00  0.03
+#
+#    seh  sez q sqd  adj in nr   avr  aar nm avxm mdxm sdxm nf avfm mdfm sdfm   vpvs
+#    0.8  1.6 c b c 0.09 10 12 0.000 .008  0            0.0  0            0.0  0.000
+#
+#                      -- travel times and delays --
+
