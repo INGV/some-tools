@@ -25,3 +25,11 @@ additional plotting.
 - `PlottingMap.ipynb`: to plot epicentral map
 - `PlottingSections.ipynb`: to plot depth-sections and elevation-profiles
 - `ConfigFile_README.md`: configuration file (YAML) or ditionary explanation
+
+### To recreate the environment
+```
+(base) [bagagli@serra] ~$ conda config --prepend channels conda-forge
+(base) [bagagli@serra] ~$ conda create --name pygmtsome python=3.9 pygmt=0.5.0
+pip install sometools
+pip install seisbench
+```

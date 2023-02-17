@@ -9,8 +9,7 @@ import logging
 #
 import numpy as np
 import pandas as pd
-import obspy
-from obspy import UTCDateTime
+from obspy import read, UTCDateTime
 # Some Tools related
 import some_tools as ST
 import some_tools.errors as STE
@@ -39,184 +38,313 @@ TRACE_FIG_HEIGHT = 4  # cm
 # =============================================================
 
 
-def _format_utcstr(utc):
-    """ Input must be an UTCDateTime obj """
-    utcstr = ("%4d-%02d-%02d %02d:%02d:%06.3f" % (
-                                utc.year,
-                                utc.month,
-                                utc.day,
-                                utc.hour,
-                                utc.minute,
-                                utc.second +
-                                utc.microsecond * 10**-6))
-    return utcstr
+# =================================================================
+# =================================================================
+# ==============================================  MAP
+
+class SomeWaveform(object):
+    """ Base class for waveforms and picks plots.
+
+    For the moment no customization possible.
 
 
-def _centimeter2seconds(xwidth, xmax, seconds):
-    """ de """
-    return xwidth*seconds/xmax
+    Supported database:
+        - pandas.DataFrame
+        - geopandas.DataFrame
+        - obspy.Catalog
 
-
-def _unique_legend(legend_list, key_tag, search_label):
-    """ Remove duplicates entries for the same label.
-        BOOLEAN return: True if match found
+    Class Attributes:
+        df (pandas.DataFrame)
+        st (obspy stream)
+        picks (pandas.DataFrame)
     """
-    for dd in legend_list:
-        if dd[key_tag].lower() == search_label:
-            return True
-    #
-    return False
+    def __init__(self, opstream, pickdf, config_file=None, grid_data=None):
+        if isinstance(opstream, str):
+            self.st = read(opstream)
+        else:
+            self.st = opstream.copy()
+        #
+        if isinstance(opstream, str):
+            self.df = pd.read(pickdf)
+        else:
+            self.df = pickdf.copy()
+        self.config_dict = None
+        # Plot
+        self.region = None
+        self.projection = None
+        self.frame = None
 
+        # --------------- Check
+        self._check_pickdf()
 
-def _miniprocess(tr, override=True):
-    """ simple and fast processing routine """
-    if not override:
-        wtr = tr.copy()
-    else:
-        wtr = tr
-    #
-    wtr.detrend('demean')
-    wtr.detrend('simple')
-    # wtr.taper(max_percentage=0.05, type='cosine')
-    wtr.filter("bandpass",
-               freqmin=1,
-               freqmax=20,
-               corners=2,
-               zerophase=True)
-    return wtr
+        # # MB: the following line will upload the default if not provided
+        # self._import_config_file(config_file=config_file)  # config_dict
+        # self._define_plot_parameters()
 
+    def _check_pickdf(self):
+        """ Select columns from pandas DataFrame and reorder them
+            for the class API
+        """
+        _colnames = tuple(self.df.columns)
+        _mandatory = set(("EQID", "STAT", "UTC", "PHASE"))
+        # --- Search and change COLUMNS-NAME
+        for cc in _colnames:
+            if cc.lower().strip() in ("id", "eqid", "eventid"):
+                self.df.rename(columns={cc: "EQID"}, errors="raise", inplace=True)
+            #
+            if cc.lower().strip() in ("stat", "station_name", "stationame"):
+                self.df.rename(columns={cc: "STAT"}, errors="raise", inplace=True)
+            # Pick Time
+            elif cc.lower().strip() in ("utc", "picktime", "pick", "utc_datetime"):
+                self.df.rename(columns={cc: "UTC"}, errors="raise", inplace=True)
+            # Phase
+            elif cc.lower().strip() in ("phase", "name", "phase_name"):
+                self.df.rename(columns={cc: "PHASE"}, errors="raise", inplace=True)
+            # Plotting
+            elif cc.lower().strip() in ("plotpar", "plotting_parameter", "plotting", "evmagtype"):
+                self.df.rename(columns={cc: "PLOTPAR"}, errors="raise", inplace=True)
+            else:
+                continue
 
-def obspyTrace2GMT(tr,
-                   plot_time_marks=False,
-                   show=True,
-                   uncertainty_center=None,
-                   uncertainty_window=None,
-                   #
-                   big_x_tick_interval=None,
-                   small_x_tick_interval=None,
-                   big_y_tick_interval=None,
-                   small_y_tick_interval=None,
-                   #
-                   fig_width=TRACE_FIG_WIDTH,
-                   fig_height=TRACE_FIG_HEIGHT,
-                   store_name=None):
-    """Plot obspy trace with GMT renders
+        # --- Extract
+        _new_colnames = set(self.df.columns)
+        # _missing_fields = list(_mandatory.difference(_new_colnames))
+        _missing_fields = _mandatory.difference(_new_colnames)
+        if len(_missing_fields) > 0:
+            raise STE.MissingParameter("I'm missing mandatory field: %s" %
+                                       _missing_fields)
+        #
+        self.df = self.df[_mandatory]
+        return True
 
-    Simple wrap around PyGMT library
+    def _format_utcstr(self, utc):
+        """ Input must be an UTCDateTime obj """
+        utcstr = ("%4d-%02d-%02d %02d:%02d:%06.3f" % (
+                                    utc.year,
+                                    utc.month,
+                                    utc.day,
+                                    utc.hour,
+                                    utc.minute,
+                                    utc.second +
+                                    utc.microsecond * 10**-6))
+        return utcstr
 
-    Args:
+    def _centimeter2seconds(self, xwidth, xmax, seconds):
+        """ de """
+        return xwidth*seconds/xmax
 
-    Returns:
+    def _unique_legend(self, legend_list, key_tag, search_label):
+        """ Remove duplicates entries for the same label.
+            BOOLEAN return: True if match found
+        """
+        for dd in legend_list:
+            if dd[key_tag].lower() == search_label:
+                return True
+        #
+        return False
 
-    """
-    t = tr.times()
-    xmin = min(t)
-    xmax = max(t)
-    ymin = min(tr.data)
-    ymax = max(tr.data)
+    def _miniprocess(self, override=False):
+        """ simple and fast processing routine """
+        if not override:
+            wst = self.st.copy()
+        else:
+            wst = self.st
+        #
+        wst.detrend('demean')
+        wst.detrend('simple')
+        # wtr.taper(max_percentage=0.05, type='cosine')
+        wst.filter("bandpass",
+                   freqmin=1,
+                   freqmax=20,
+                   corners=2,
+                   zerophase=True)
+        return wst
 
-    # ================================= Set Frame INTERVALs
+    def plot_stream(self,
+                    preprocessing=True,
+                    #
+                    plot_picks=False,
+                    uncertainty_center=None,
+                    uncertainty_window=None,
+                    #
+                    big_x_tick_interval=None,
+                    small_x_tick_interval=None,
+                    big_y_tick_interval=None,
+                    small_y_tick_interval=None,
+                    fig_width=TRACE_FIG_WIDTH,
+                    fig_height=TRACE_FIG_HEIGHT,
+                    #
+                    store_name=None,
+                    show=False):
+        """Plot obspy trace with GMT renders
 
-    if not big_x_tick_interval:
-        xlabelMaj = float((xmax-xmin)/6.0)
-    else:
-        xlabelMaj = big_x_tick_interval
-    #
-    if not small_x_tick_interval:
-        xlabelMin = float((xmax-xmin)/30.0)
-    else:
-        xlabelMin = small_x_tick_interval
-    #
-    if not big_y_tick_interval:
-        ylabelMaj = int((ymax-ymin)/10.0)
-    else:
-        ylabelMaj = big_y_tick_interval
-    #
-    if not small_y_tick_interval:
-        ylabelMin = int((ymax-ymin)/50.0)
-    else:
-        ylabelMin = small_y_tick_interval
+        Simple wrap around PyGMT library
 
-    # =====================================================
+        Args:
 
-    region = [xmin, xmax, ymin, ymax]
-    projection = "X%dc/%d" % (fig_width, fig_height)
+        Returns:
 
-    frame = ["xa%.1ff%.1f" % (xlabelMaj, xlabelMin),
-             "ya%df%d" % (ylabelMaj, ylabelMin),
-             "WS", "x+ltime(s)", "y+lcounts"]
+        """
 
-    # ------------------  Plot
-    # @@@ Layer 0 : Canvas
-    fig = pygmt.Figure()
-    fig.basemap(region=region, projection=projection, frame=frame)
+        colordict = {
+            # 'P':  "deepskyblue",
+            # 'S':  "darkorange",
+            'P':  "blue",
+            'S':  "red",
+        }
+        # ---- Check Picks:
+        if not self.st:
+            raise AttributeError("Missing stream!")
+        if plot_picks and (self.df.empty or not self._check_pickdf()):
+            raise AttributeError("Missing picks dataframe! "
+                                 "Run again with `plot_picks` flag to False")
 
-    # @@@ Layer 1 : Uncertainties
-    if plot_time_marks:
-        if (isinstance(uncertainty_window, (int, float)) and
-           isinstance(uncertainty_center, UTCDateTime)):
-            xunc = _centimeter2seconds(fig_width, xmax, uncertainty_window)
-            ttm = uncertainty_center - tr.stats.starttime
-            fig.plot(
-                data=np.array([[ttm, 0, xunc, fig_height+0.2]]),
-                style="rc",
-                # transparency=50,
-                color="220"
-            )
+        # ---- Eventually pre-proc
+        if preprocessing:
+            plot_st = self._miniprocess()
+        else:
+            plot_st = self.st
 
-    # @@@ Layer 2 : Waveforms
-    fig.plot(
-        x=t,
-        y=tr.data,
-        pen="0.7p,black",
-    )
+        # ---- Define the Figure Frame
+        nsubplot = len(self.st)
+        channels = [tr.stats.channel for tr in self.st]
+        fig = pygmt.Figure()
 
-    # @@@ Layer 3 : Text
-    fig.text(
-        text="start: %s" % _format_utcstr(tr.stats.starttime),
-        x=(0.85*xmax)-xmin,
-        y=ymin + ylabelMaj*1.1,
-        # fill="green",
-        font="8p,Helvetica,black")
+        with fig.subplot(nrows=3, ncols=1, figsize=(fig_width, fig_height*nsubplot)):
+                         # frame="lrtb"):
+            for index, chan in zip(range(nsubplot), channels):
+                with fig.set_panel(panel=index):
+                    # ---- Actual plot
+                    tr = plot_st.select(channel=chan)[0]
+                    t = tr.times()
+                    xmin = min(t)
+                    xmax = max(t)
+                    ymin = min(tr.data)
+                    ymax = max(tr.data)
+                    # fig.text(
+                    #     position="MC",
+                    #     text=f"index: {index}; row: {i}, col: {j}",
+                    #     region=[0, 1, 0, 1],
+                    # )
 
-    # @@@ Layer 4 :  Picks
-    if plot_time_marks:
-        for xx in tr.stats.timemarks:
-            # tuple ( UTC, matplotlibDict{})
-            ttm = xx[0] - tr.stats.starttime
-            try:
-                fig.plot(
-                    x=[ttm, ttm],
-                    y=[ymin + ylabelMaj*1.5, ymax - ylabelMaj*1.5],
-                    pen="%fp,%s" % (xx[1]['ms'], xx[1]['color']),
-                    straight_line=True,
+                    # ================================= Set Frame INTERVALs
 
-                    # Set the legend label,
-                    # and set the symbol size to be 0.25 cm (+S0.25c) in legend
-                    label=f"{xx[1]['label']}+S0.25c",
-                )
-            except KeyError:
-                # No label --> No legend entry
-                fig.plot(
-                    x=[ttm, ttm],
-                    y=[ymin + ylabelMaj*1.5, ymax - ylabelMaj*1.5],
-                    pen="%fp,%s" % (xx[1]['ms'], xx[1]['color']),
-                    straight_line=True,
-                )
+                    if not big_x_tick_interval:
+                        xlabelMaj = float((xmax-xmin)/6.0)
+                    else:
+                        xlabelMaj = big_x_tick_interval
+                    #
+                    if not small_x_tick_interval:
+                        xlabelMin = float((xmax-xmin)/30.0)
+                    else:
+                        xlabelMin = small_x_tick_interval
+                    #
+                    if not big_y_tick_interval:
+                        ylabelMaj = int((ymax-ymin)/10.0)
+                    else:
+                        ylabelMaj = big_y_tick_interval
+                    #
+                    if not small_y_tick_interval:
+                        ylabelMin = int((ymax-ymin)/50.0)
+                    else:
+                        ylabelMin = small_y_tick_interval
 
-        # Make legend
-        fig.legend(transparency=20,
-                   position="jBL+o0.1c",
-                   box="+p1+g250")
-    if show:
-        fig.show(method="external")
+                    # =====================================================
 
-    if isinstance(store_name, str):
-        # remember to use extension "*.png - *.pdf"
-        logger.info("Storing figure: %s" % store_name)
-        fig.savefig(store_name)
-    #
-    return fig
+                    region = [xmin, xmax, ymin, ymax]
+                    projection = "X%dc/%d" % (fig_width, fig_height)
+
+                    if index == (nsubplot-1):
+                        frame = ["xa%.1ff%.1f" % (xlabelMaj, xlabelMin),
+                                 "ya%df%d" % (ylabelMaj, ylabelMin),
+                                 "WS", "x+ltime(s)", "y+lcounts"]
+                    else:
+                        frame = ["xa%.1ff%.1f" % (xlabelMaj, xlabelMin),
+                                 "ya%df%d" % (ylabelMaj, ylabelMin),
+                                 "WS", "y+lcounts"]
+
+                    # ------------------  Plot
+                    # @@@ Layer 0 : Canvas
+                    fig.basemap(region=region, projection=projection, frame=frame)
+
+                    # # @@@ Layer 1 : Uncertainties
+                    # if plot_time_marks:
+                    #     if (isinstance(uncertainty_window, (int, float)) and
+                    #        isinstance(uncertainty_center, UTCDateTime)):
+                    #         xunc = _centimeter2seconds(fig_width, xmax, uncertainty_window)
+                    #         ttm = uncertainty_center - tr.stats.starttime
+                    #         fig.plot(
+                    #             data=np.array([[ttm, 0, xunc, fig_height+0.2]]),
+                    #             style="rc",
+                    #             # transparency=50,
+                    #             color="220"
+                    #         )
+
+                    # @@@ Layer 2 : Waveforms
+                    fig.plot(
+                        x=t,
+                        y=tr.data,
+                        pen="0.7p,black",
+                    )
+
+                    # @@@ Layer 3 : Text
+                    fig.text(
+                        text="start: %s" % self._format_utcstr(
+                                                    tr.stats.starttime),
+                        x=(0.85*xmax)-xmin,
+                        y=ymin + ylabelMaj*1.1,
+                        # fill="green",
+                        font="8p,Helvetica,black")
+
+                    fig.text(
+                        text=tr.id,
+                        x=(0.85*xmax)-xmin,
+                        y=ymax - ylabelMaj*1.1,
+                        # fill="white",
+                        font="12p,Helvetica,black")
+
+                    # @@@ Layer 4 :  Picks
+                    if plot_picks and not self.df.empty:
+                        statname = tr.stats.station
+                        # "STAT", "UTC", "PHASE"
+                        pickpd = self.df.loc[(self.df['STAT'] == tr.stats.station) &
+                                             (self.df['UTC'].notnull())]
+                        for _x, row in pickpd.iterrows():
+                            ttm = UTCDateTime(row["UTC"]) - tr.stats.starttime
+                            try:
+                                fig.plot(
+                                    x=[ttm, ttm],
+                                    y=[ymin + ylabelMaj*1.5, ymax - ylabelMaj*1.5],
+                                    pen="%fp,%s" % (1.5, colordict[row["PHASE"]]),
+                                    straight_line=True,
+                                    # Set the legend label,
+                                    # and set the symbol size to be 0.25 cm (+S0.25c) in legend
+                                    label=f"{row['PHASE']}+S0.25c",
+                                )
+                            except KeyError:
+                                # No label --> No legend entry
+                                fig.plot(
+                                    x=[ttm, ttm],
+                                    y=[ymin + ylabelMaj*1.5, ymax - ylabelMaj*1.5],
+                                    pen="%fp,%s" % (1.5, colordict[row["PHASE"]]),
+                                    straight_line=True,
+                                )
+
+                        # Make legend
+                        fig.legend(transparency=20,
+                                   position="jBL+o0.1c",
+                                   box="+p1+g250")
+
+        if show:
+            fig.show(method="external")
+
+        if isinstance(store_name, str):
+            # remember to use extension "*.png - *.pdf"
+            logger.info("Storing figure: %s" % store_name)
+            fig.savefig(store_name)
+
+        return fig
+
 
 # =================================================================
 # =================================================================
@@ -453,7 +581,7 @@ class SomeMap(object):
     # ========================================================= Plotting
     def plot_map(self, plot_config=None,
                  show=True, store_name=None,
-                 in_fig=None, panel=None):
+                 in_fig=None, panel=None, plot_legend=True):
         """ Create Map using PyGMT library """
 
         if self.df is None or self.df.empty or not isinstance(self.df, pd.DataFrame):
@@ -507,6 +635,48 @@ class SomeMap(object):
                      style="cc",
                      color=_plt_conf_dict['event_color'],
                      pen="0.25p,black")
+
+        if plot_legend:
+            legdata = {'LON':  [0.0, ], 'LAT': [0.0, ]}
+            _legend_df = pd.DataFrame(legdata)
+            if _plt_conf_dict['scale_magnitude']:
+                fig.plot(x=_legend_df["LON"],
+                         y=_legend_df["LAT"],
+                         label="'Mag. 1'+S" +
+                         str(_plt_conf_dict['event_size'] * (2 ** 1)) + "c",
+                         style="cc",
+                         color=_plt_conf_dict['event_color'],
+                         pen="0.25p,black")
+                # fig.plot(x=_legend_df["LON"],
+                #          y=_legend_df["LAT"],
+                #          label="'Mag. 2'+S" +
+                #          str(_plt_conf_dict['event_size'] * (2 ** 2)) + "c",
+                #          style="cc",
+                #          color=_plt_conf_dict['event_color'],
+                #          pen="0.25p,black")
+                fig.plot(x=_legend_df["LON"],
+                         y=_legend_df["LAT"],
+                         label="'Mag. 4'+S" +
+                         str(_plt_conf_dict['event_size'] * (2 ** 3)) + "c",
+                         style="cc",
+                         color=_plt_conf_dict['event_color'],
+                         pen="0.25p,black")
+                fig.legend(
+                    transparency=20,
+                    position="jBL+o0.1c",
+                    box="+p1+g250")
+            else:
+                fig.plot(x=_legend_df["LON"],
+                         y=_legend_df["LAT"],
+                         label="Earthquakes+S" +
+                               str(_plt_conf_dict['event_size']) + "c",
+                         style="cc",
+                         color=_plt_conf_dict['event_color'],
+                         pen="0.25p,black")
+                fig.legend(
+                    transparency=20,
+                    position="jBL+o0.1c",
+                    box="+p1+g250")
 
         if show:
             fig.show(method="external")

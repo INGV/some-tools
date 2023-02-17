@@ -27,6 +27,7 @@ setup(
     #
     include_package_data=True,
     zip_safe=False,
+    scripts=['bin/sometools_map.py', 'bin/sometools_map_elev_sect.py', 'bin/sometools_trace.py'],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
