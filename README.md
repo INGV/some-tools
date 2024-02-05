@@ -2,10 +2,11 @@
 
 Here is a project of, indeed, "some tools" for seismic routines and plotting analysis.
 
-VERSION: _0.0.9_
+VERSION: _0.1.0_
 
-DATE: 04-2022
+DATE: 02-2024
 
+Release for INGV repo
 
 ### Plotting
 This folder contains, at the moment, modules and routines for static plotting
@@ -26,10 +27,3 @@ additional plotting.
 - `PlottingSections.ipynb`: to plot depth-sections and elevation-profiles
 - `ConfigFile_README.md`: configuration file (YAML) or ditionary explanation
 
-### To recreate the environment
-```
-(base) [bagagli@serra] ~$ conda config --prepend channels conda-forge
-(base) [bagagli@serra] ~$ conda create --name pygmtsome python=3.9 pygmt=0.5.0
-pip install sometools
-pip install seisbench
-```
